@@ -19,13 +19,26 @@ LOGInterval = 100
 BATCHSIZE = 10
 IMAGESIZE = 28
 KERNELNUMBER_C1 = 10
+DATA_FOLDER = 'data/MNIST/numpy'
 '''
 --------------------------Hyperparameters--------------------------
 '''
 totensor = ToTensor()
-mnistdata = MnistDataset('data/numpy', True, transform=totensor)
+mnistdata = MnistDataset(DATA_FOLDER, True, transform=totensor)
 dataloader = DataLoader(mnistdata, batch_size=10, shuffle=True, num_workers=5)
 
+sample = mnistdata[0]
+print("image shape ", sample['image'].shape)
+
+input()
+
+for batch_idx, sample in enumerate(dataloader):
+    img_batch = sample['image']
+    label_batch = sample['label']
+    input()
+    print("batch number", batch_idx, " image sizes ", img_batch.shape)
+
+"""
 conv_model = ConvModel()
 
 loss_fn = nn.MSELoss(reduction='sum')
@@ -41,7 +54,7 @@ pbar = tqdm(range(EPOCHS))
 while loss_decrease > 0.4:
     for e in pbar:
         for batch_idx, sample in enumerate(dataloader):
-            y_pred = conv_model(sample['image'])
+            y_pred = conv_model(sample['image'].view(BATCHSIZE, 1, IMAGESIZE, IMAGESIZE))
             loss = loss_fn(y_pred, sample['label'])
             optimizer.zero_grad()
             loss.backward()
@@ -54,3 +67,4 @@ while loss_decrease > 0.4:
         loss_list.append(loss.item())
 
 pbar.close()
+"""

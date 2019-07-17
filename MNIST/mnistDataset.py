@@ -6,6 +6,7 @@ import torch
 
 # make sure this value fits the one in mnistToNumpy.py (or count files in dirs)
 MAX_FILES_PER_FOLDER = 10000
+DATA_FOLDER = "data/MNIST/numpy"
 
 
 def recursiveCount(start):
@@ -65,7 +66,9 @@ class ToTensor(object):
 
 
 if __name__ == "__main__":
-    training_set = MnistDataset("data/numpy/", train=True)
+    training_set = MnistDataset(DATA_FOLDER, train=True, transform=ToTensor())
     print("training set length: ", len(training_set))
-    test_set = MnistDataset("data/numpy", train=False)
+    test_set = MnistDataset(DATA_FOLDER, train=False)
     print("test set length: ", len(test_set))
+    img = training_set[0]
+    print("image is shaped: ", img['image'].shape)
