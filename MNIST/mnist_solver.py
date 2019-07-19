@@ -1,15 +1,14 @@
 from MNIST.mnistDataset import MnistDataset, ToTensor
-from MNIST.models import ConvModel
+from MNIST.models.models import ConvModel
 
 from torch.utils.data import DataLoader
 from torch import nn
-from tqdm import trange, tqdm
+from tqdm import tqdm
 
 import torch
-import numpy as np
 
 '''
---------------------------Hyperparameters--------------------------
+-------------------------Hyperparameters--------------------------
 '''
 EPOCHS = 50
 ITER = 100
@@ -19,26 +18,28 @@ LOGInterval = 100
 BATCHSIZE = 10
 IMAGESIZE = 28
 KERNELNUMBER_C1 = 10
-DATA_FOLDER = 'data/MNIST/numpy'
+DATA_FOLDER = 'data/numpy'
 '''
---------------------------Hyperparameters--------------------------
+--------------------------helper methods--------------------------
+'''
+
+
+def docu(model, testset, loss_fn):
+    l = 0
+    for batch_idx, sample in enumerate(testset):
+        y_pred = model(sample['image'].view(BATCHSIZE, 1, IMAGESIZE, IMAGESIZE))
+        l += loss_fn(y_pred, sample['label']).item()
+    return l
+
+'''
+-----------------------------training-----------------------------
 '''
 totensor = ToTensor()
-mnistdata = MnistDataset(DATA_FOLDER, True, transform=totensor)
-dataloader = DataLoader(mnistdata, batch_size=10, shuffle=True, num_workers=5)
+traindata = MnistDataset(DATA_FOLDER, True, transform=totensor)
+testdata = MnistDataset(DATA_FOLDER, False, transform=totensor)
+trainingset = DataLoader(traindata, batch_size=10, shuffle=True, num_workers=5)
+testset = DataLoader(testdata, batch_size=10, shuffle=True, num_workers=5)
 
-sample = mnistdata[0]
-print("image shape ", sample['image'].shape)
-
-input()
-
-for batch_idx, sample in enumerate(dataloader):
-    img_batch = sample['image']
-    label_batch = sample['label']
-    input()
-    print("batch number", batch_idx, " image sizes ", img_batch.shape)
-
-"""
 conv_model = ConvModel()
 
 loss_fn = nn.MSELoss(reduction='sum')
@@ -49,22 +50,35 @@ loss = 0
 loss_decrease = 1
 loss_list = [0] * 5
 
+
+l = docu(conv_model, testset, loss_fn)
+print(l)
+
+input()
+
 pbar = tqdm(range(EPOCHS))
 
 while loss_decrease > 0.4:
     for e in pbar:
-        for batch_idx, sample in enumerate(dataloader):
+        for batch_idx, sample in enumerate(trainingset):
+            # forward pass
             y_pred = conv_model(sample['image'].view(BATCHSIZE, 1, IMAGESIZE, IMAGESIZE))
+            # loss evaluation
             loss = loss_fn(y_pred, sample['label'])
+            # backward pass
             optimizer.zero_grad()
             loss.backward()
+            # updating weigths
             optimizer.step()
-            if((e+1) * (batch_idx+1) % LOGInterval == 0):
-                print((e+1)*(batch_idx+1), loss.item())
+            # logging
+            if (e+1) * (batch_idx+1) % LOGInterval == 0:
+                print("evaluating testset")
+                l = docu(conv_model, testset, loss_fn)
+                print(l)
+                loss_decrease = loss_list.pop(0) - l
+                loss_list.append(loss.item())
+
             if batch_idx == ITER:
                 break
-        loss_decrease = loss_list.pop(0) - loss.item()
-        loss_list.append(loss.item())
 
 pbar.close()
-"""

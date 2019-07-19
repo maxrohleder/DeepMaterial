@@ -6,7 +6,7 @@ import torch
 
 # make sure this value fits the one in mnistToNumpy.py (or count files in dirs)
 MAX_FILES_PER_FOLDER = 10000
-DATA_FOLDER = "data/MNIST/numpy"
+DATA_FOLDER = "data/numpy"
 
 
 def recursiveCount(start):
