@@ -5,8 +5,7 @@ import torch.nn.functional as F
 class ConvModel(Module):
     def __init__(self):
         super(ConvModel, self).__init__()
-        print('init ConvModel!')
-        self.conv1 = nn.Conv2d(0, 10, kernel_size=5, stride=2, padding=2)
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=5, stride=2, padding=2)
         self.conv2 = nn.Conv2d(10, 20, kernel_size=5, stride=2, padding=2)
         self.fc1 = nn.Linear(7*7*20, 1)
 
