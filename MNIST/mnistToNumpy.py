@@ -112,4 +112,4 @@ def doConversion(img_path, label_path, n, target_folder, prefix):
     return True
 
 if __name__ == "__main__":
-    mnistToNumpy("data/MNIST/orig/", "data/MNIST/numpy/")
+    mnistToNumpy("data/orig/", "data/numpy/")

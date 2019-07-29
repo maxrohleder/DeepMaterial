@@ -38,6 +38,7 @@ class MnistDataset(Dataset):
 
     def __getitem__(self, index):
         if index < 0 or index >= self.number_of_files:
+            print(index)
             raise IndexError
         path_string = self.root_dir + '/**/' + self.prefix + '_' + str(index) + '_*.npy'
         file = glob.glob(path_string, recursive=True).pop()
@@ -61,8 +62,7 @@ class ToTensor(object):
         # numpy image: H x W x C
         # torch image: C X H X W
         image.reshape(1, 28, 28)
-        return {'image': torch.from_numpy(image),
-                'label': torch.scalar_tensor(label)}
+        return torch.from_numpy(image), torch.tensor(label, dtype=torch.float)
 
 
 if __name__ == "__main__":
