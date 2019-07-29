@@ -25,25 +25,29 @@ def getSubdir(index, n):
 
 
 class MnistDataset(Dataset):
-
     def __init__(self, root_dir, train=True, transform=None):
         if train:
             self.root_dir = os.path.join(root_dir, 'train')
-            self.prefix = 'train'
+            self.scheme = self.root_dir + '/**/train_**.npy'
+            self.trainImages = [{'image': np.load(n), 'label': int(n[-5:-4])} for n in glob.glob(self.scheme, recursive=True)]
         else:
             self.root_dir = os.path.join(root_dir, 'test')
-            self.prefix = 'test'
+            self.scheme = self.root_dir + '/test_**.npy'
+            self.trainImages = [{'image': np.load(n), 'label': int(n[-5:-4])} for n in glob.glob(self.scheme, recursive=True)]
         self.number_of_files = recursiveCount(self.root_dir)
         self.transform = transform
 
     def __getitem__(self, index):
-        if index < 0 or index >= self.number_of_files:
-            print(index)
-            raise IndexError
-        path_string = self.root_dir + '/**/' + self.prefix + '_' + str(index) + '_*.npy'
-        file = glob.glob(path_string, recursive=True).pop()
-        label = file[-5:-4]
-        sample = {'image': np.load(file), 'label': int(label)}
+        # if index < 0 or index >= self.number_of_files:
+        #     print(index)
+        #     raise IndexError
+        # path_string = self.root_dir + '/**/' + self.prefix + '_' + str(index) + '_*.npy'
+        # file = glob.glob(path_string, recursive=True).pop()
+        # label = file[-5:-4]
+        # sample = {'image': np.load(file), 'label': int(label)}
+        # if self.transform:
+        #     sample = self.transform(sample)
+        sample = self.trainImages[index]
         if self.transform:
             sample = self.transform(sample)
         return sample
