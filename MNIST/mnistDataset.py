@@ -66,7 +66,7 @@ class ToTensor(object):
         # numpy image: H x W x C
         # torch image: C X H X W
         image.reshape(1, 28, 28)
-        return torch.from_numpy(image), torch.tensor(label, dtype=torch.float)
+        return torch.from_numpy(image), torch.tensor(label)
 
 
 if __name__ == "__main__":

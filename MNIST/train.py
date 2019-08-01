@@ -1,12 +1,13 @@
 import time
 
 from mnistDataset import MnistDataset, ToTensor
-from models.models import ConvModel
+from models.models import ConvModel, MNISTNet
 
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import torch
 from torch import nn
+import torch.nn.functional as F
 import torchvision
 from torchvision import datasets, transforms
 
@@ -20,7 +21,7 @@ import argparse
 '''
 # Training settings
 parser = argparse.ArgumentParser(description='DeepMaterial model training')
-parser.add_argument('--data', default='../data/MNIST/numpy',
+parser.add_argument('--data', default='../data/numpy',
                     help='folder containing test and training sets of MNIST')
 parser.add_argument('--run', default='./run',
                     help='target folder which will hold model weights and tb logs')
@@ -38,7 +39,7 @@ parser.add_argument('--lr', type=float, default=1e-6, metavar='LR',
                     help='learning rate (default: 0.000001)')
 parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
                     help='SGD momentum (default: 0.5)')
-parser.add_argument('--tensorboard', action='store_true', default=False,
+parser.add_argument('--tb', action='store_true', default=True,
                     help='enables/disables tensorboard logging')
 parser.add_argument('--seed', type=int, default=1998, metavar='S',
                     help='random seed (default: 1)')
@@ -46,6 +47,9 @@ parser.add_argument('--log-interval', type=int, default=5, metavar='N',
                     help='how many batches to wait before logging training status')
 parser.add_argument('--save-model', action='store_true', default=True,
                     help='For Saving the current Model (default=True)')
+
+parser.add_argument('--use-tv', action='store_true', default=False,
+                    help='use torchvision dataset insteat of custom one')
 args = parser.parse_args()
 
 EPOCHS = args.epochs
@@ -62,8 +66,8 @@ DATA_FOLDER = args.data
 ROOT = args.run
 WEIGHT_DIR = os.path.join(ROOT, "weights")
 LOG_DIR = os.path.join(ROOT, "log")
-CHECKPOINT = os.path.join(WEIGHT_DIR, "checkpoint.tar")
-useTensorboard = args.tensorboard
+CHECKPOINT = os.path.join(WEIGHT_DIR, "checkpoint.pt")
+useTensorboard = args.tb
 
 # check existance of data
 if not os.path.isdir(DATA_FOLDER):
@@ -107,20 +111,27 @@ else:
 '''
 ----------------loading model and checkpoints---------------------
 '''
-print("loading datasets")
-totensor = ToTensor()
-traindata = MnistDataset(DATA_FOLDER, True, transform=totensor)
-testdata = MnistDataset(DATA_FOLDER, False, transform=totensor)
-#transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-#traindata = datasets.MNIST('mnist_train', train=True, download=True, transform=transform)
-#testdata = datasets.MNIST('mnist_test', train=False, download=True, transform=transform)
+print("loading datasets to ram")
+if not args.use_tv:
+    totensor = ToTensor()
+    traindata = MnistDataset(DATA_FOLDER, True, transform=totensor)
+    testdata = MnistDataset(DATA_FOLDER, False, transform=totensor)
+else:
+    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
+    traindata = datasets.MNIST(DATA_FOLDER+'mnist_train', train=True, download=True, transform=transform)
+    testdata = datasets.MNIST(DATA_FOLDER+'mnist_test', train=False, download=True, transform=transform)
 trainingset = DataLoader(traindata, **train_params)
 testset = DataLoader(testdata, **test_params)
 
-m = ConvModel(IMAGESIZE).to(device)
-loss_fn = nn.MSELoss(reduction='sum')
+# m = ConvModel().to(device)
+# loss_fn = nn.MSELoss(reduction='sum')
+
+m = MNISTNet().to(device)
+loss_fn = F.nll_loss
+
 o = torch.optim.Adam(m.parameters(), lr=LR)
-l = None
+test_loss = None
+train_loss = None
 
 if os.path.exists(CHECKPOINT) and os.path.isfile(CHECKPOINT):
     print("loading old checkpoint...")
@@ -139,17 +150,23 @@ else:
 '''
 global_step = 0
 # calculating initial loss
-if l is None:
+if test_loss is None or train_loss is None:
     with torch.no_grad():
-        l = 0
+        test_loss = 0
         for x, y in testset:
             x, y = x.to(device), y.to(device)
-            pred = m(x).view(BATCHSIZE)
-            l += loss_fn(pred, y.to(torch.float)).item()
+            pred = m(x)
+            test_loss += loss_fn(pred, y).item()
+
+        train_loss = 0
+        for x, y in testset:
+            x, y = x.to(device), y.to(device)
+            pred = m(x)
+            train_loss += loss_fn(pred, y).item()
 
 # printing runtime information
 print("starting training for {} epochs {} iterations each\n\t{} total".format(EPOCHS, ITER, EPOCHS*ITER))
-
+print("\tlogging interval: {}".format(LOGInterval))
 for e in range(START, START+EPOCHS):
     for i in range(ITER):
         global_step = (e * ITER) + i
@@ -158,8 +175,8 @@ for e in range(START, START+EPOCHS):
         print("\ntraining gs: ", global_step)
         for x, y in tqdm(trainingset):
             x, y = x.to(device), y.to(device)
-            pred = m(x).view(BATCHSIZE) # problematic as it assumes NUM_SAMPLES/BATCHSIZE = 0
-            loss = loss_fn(pred, y.to(torch.float))
+            pred = m(x) # problematic as it assumes NUM_SAMPLES/BATCHSIZE = 0
+            loss = loss_fn(pred, y)
             o.zero_grad()
             loss.backward()
             o.step()
@@ -171,28 +188,48 @@ for e in range(START, START+EPOCHS):
                 'epoch': e,
                 'model_state_dict': m.state_dict(),
                 'optimizer_state_dict': o.state_dict(),
-                'loss': l},
+                'loss': train_loss},
                 CHECKPOINT)
             print('\tsaved progress to: ', CHECKPOINT)
-            if logger is not None and l is not None:
-                logger.add_scalar('loss', l, global_step=global_step)
+            if logger is not None and train_loss is not None:
+                logger.add_scalar('test_loss', test_loss, global_step=global_step)
+                logger.add_scalar('train_loss', train_loss, global_step=global_step)
                 print("\ttensorboard updated")
-            elif l is not None:
-                print("\tloss of global-step {}: {}".format(global_step, l))
+            elif train_loss is not None:
+                print("\tloss of global-step {}: {}".format(global_step, train_loss))
             elif not useTensorboard:
-                print("\t(tb-logging disabled) LOSS : ", l)
+                print("\t(tb-logging disabled) test/train loss: {}/{} ".format(test_loss, train_loss))
             else:
                 print("\tno loss accumulated yet")
 
     # validation
-    print("\nvalidating")  # tqdm needs time to chill
+    print("\nvalidating")
     with torch.no_grad():
-        l = 0
+        test_loss = 0
         for x, y in testset:
             x, y = x.to(device), y.to(device)
-            pred = m(x).view(BATCHSIZE)
-            l += loss_fn(pred, y.to(torch.float)).item()
+            pred = m(x)
+            test_loss += loss_fn(pred, y).item()
 
+        train_loss = 0
+        for x, y in trainingset:
+            x, y = x.to(device), y.to(device)
+            pred = m(x)
+            train_loss += loss_fn(pred, y).item()
+
+
+# saving final results
+print("saving upon exit")
+torch.save({
+    'epoch': EPOCHS+START,
+    'model_state_dict': m.state_dict(),
+    'optimizer_state_dict': o.state_dict(),
+    'loss': train_loss},
+    CHECKPOINT)
+print('\tsaved progress to: ', CHECKPOINT)
+if logger is not None and train_loss is not None:
+    logger.add_scalar('test_loss', test_loss, global_step=global_step)
+    logger.add_scalar('train_loss', train_loss, global_step=global_step)
 
 if logger is not None:
     logger.close()
