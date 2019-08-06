@@ -1,4 +1,3 @@
-from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from matplotlib import pyplot as plt
 from models.models import MNISTNet

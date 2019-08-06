@@ -18,7 +18,7 @@ print("should be 1.0: " + str(Iodine15mg.sum()))
 
 # 1. calculate delta vector
 deltaIod5mg = Iodine5mg - SolidWater
-
+print(["{0:.4}".format(i) for i in deltaIod5mg])
 # 2. calculating errors of extrapolation
 extraIod10mg = SolidWater + 2 * deltaIod5mg
 extraIod15mg = SolidWater + 3 * deltaIod5mg

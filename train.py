@@ -1,10 +1,15 @@
-from mnistDataset import MnistDataset, ToTensor
-from models.models import MNISTNet
+import time
+
+from torch import nn, optim
+
+from CONRADataset import CONRADataset
+from models.unet import UNet
 
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import torch
 import torch.nn.functional as F
+from torchvision.models import ResNet
 from torchvision import datasets, transforms
 
 from tqdm import tqdm
@@ -17,19 +22,19 @@ import argparse
 '''
 # Training settings
 parser = argparse.ArgumentParser(description='DeepMaterial model training')
-parser.add_argument('--data', default='../data/numpy',
+parser.add_argument('--data', default='/home/mr/Documents/bachelor/data/simulation',
                     help='folder containing test and training sets of MNIST')
 parser.add_argument('--run', default='./run',
                     help='target folder which will hold model weights and tb logs')
-parser.add_argument('--batch-size', type=int, default=50, metavar='N',
+parser.add_argument('--batch-size', type=int, default=2, metavar='N',
                     help='input batch size for training (default: 50)')
-parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
+parser.add_argument('--test-batch-size', type=int, default=2, metavar='N',
                     help='input batch size for testing (default: 1000)')
-parser.add_argument('--workers', type=int, default=10, metavar='N',
+parser.add_argument('--workers', type=int, default=5, metavar='N',
                     help='parallel data loading processes (default: 10)')
-parser.add_argument('--epochs', type=int, default=5, metavar='N',
+parser.add_argument('--epochs', type=int, default=1, metavar='N',
                     help='number of epochs to train (default: 5)')
-parser.add_argument('--iterations', type=int, default=10, metavar='N',
+parser.add_argument('--iterations', type=int, default=1, metavar='N',
                     help='training cycles per epoch (before validation) (default: 10)')
 parser.add_argument('--lr', type=float, default=1e-6, metavar='LR',
                     help='learning rate (default: 0.000001)')
@@ -39,17 +44,14 @@ parser.add_argument('--tb', action='store_true', default=True,
                     help='enables/disables tensorboard logging')
 parser.add_argument('--seed', type=int, default=1998, metavar='S',
                     help='random seed (default: 1)')
-parser.add_argument('--log-interval', type=int, default=5, metavar='N',
+parser.add_argument('--log-interval', type=int, default=1, metavar='N',
                     help='how many batches to wait before logging training status')
 parser.add_argument('--save-model', action='store_true', default=True,
                     help='For Saving the current Model (default=True)')
-
-parser.add_argument('--use-tv', action='store_true', default=False,
-                    help='use torchvision dataset insteat of custom one')
 args = parser.parse_args()
 
 EPOCHS = args.epochs
-START = 0 # could enter a checkpoint start epoch
+START = 0  # could enter a checkpoint start epoch
 ITER = args.iterations  # per epoch
 LR = args.lr
 MOM = args.momentum
@@ -57,7 +59,6 @@ LOGInterval = args.log_interval
 BATCHSIZE = args.batch_size
 TEST_BATCHSIZE = args.test_batch_size
 NUMBER_OF_WORKERS = args.workers
-IMAGESIZE = 28
 DATA_FOLDER = args.data
 ROOT = args.run
 WEIGHT_DIR = os.path.join(ROOT, "weights")
@@ -108,24 +109,32 @@ else:
 ----------------loading model and checkpoints---------------------
 '''
 print("loading datasets to ram")
-if not args.use_tv:
-    totensor = ToTensor()
-    traindata = MnistDataset(DATA_FOLDER, True, transform=totensor)
-    testdata = MnistDataset(DATA_FOLDER, False, transform=totensor)
-else:
-    transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-    traindata = datasets.MNIST(DATA_FOLDER+'mnist_train', train=True, download=True, transform=transform)
-    testdata = datasets.MNIST(DATA_FOLDER+'mnist_test', train=False, download=True, transform=transform)
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+
+traindata = CONRADataset(DATA_FOLDER,
+                         True,
+                         device=device,
+                         precompute=True,
+                         transform=normalize)
+testdata = CONRADataset(DATA_FOLDER,
+                        False,
+                        device=device,
+                        precompute=True,
+                        transform=normalize)
+
 trainingset = DataLoader(traindata, **train_params)
 testset = DataLoader(testdata, **test_params)
 
-# m = ConvModel().to(device)
-# loss_fn = nn.MSELoss(reduction='sum')
+m = UNet(2, 2).to(device)
 
-m = MNISTNet().to(device)
-loss_fn = F.nll_loss
+o = optim.SGD(m.parameters(),
+              lr=LR,
+              momentum=MOM,
+              weight_decay=0.0005)
 
-o = torch.optim.Adam(m.parameters(), lr=LR)
+loss_fn = nn.BCELoss(reduction='sum')
+
 test_loss = None
 train_loss = None
 
@@ -135,9 +144,10 @@ if os.path.exists(CHECKPOINT) and os.path.isfile(CHECKPOINT):
     m.load_state_dict(checkpoint['model_state_dict'])
     m.to(device)
     o.load_state_dict(checkpoint['optimizer_state_dict'])
-    l = checkpoint['loss']
+    train_loss = checkpoint['train_loss']
+    test_loss = checkpoint['test_loss']
     START = checkpoint['epoch']
-    print("resuming training at epoch ", START, " at a loss of ", l)
+    print("resuming training at epoch ", START, " at a loss of ", train_loss)
 else:
     print("starting from scratch")
 
@@ -147,6 +157,7 @@ else:
 global_step = 0
 # calculating initial loss
 if test_loss is None or train_loss is None:
+    m.eval()
     with torch.no_grad():
         test_loss = 0
         for x, y in testset:
@@ -161,17 +172,18 @@ if test_loss is None or train_loss is None:
             train_loss += loss_fn(pred, y).item()
 
 # printing runtime information
-print("starting training for {} epochs {} iterations each\n\t{} total".format(EPOCHS, ITER, EPOCHS*ITER))
+print("starting training for {} epochs {} iterations each\n\t{} total".format(EPOCHS, ITER, EPOCHS * ITER))
 print("\tlogging interval: {}".format(LOGInterval))
-for e in range(START, START+EPOCHS):
+for e in range(START, START + EPOCHS):
     for i in range(ITER):
         global_step = (e * ITER) + i
 
         # training
+        m.train()
         print("\ntraining gs: ", global_step)
         for x, y in tqdm(trainingset):
             x, y = x.to(device), y.to(device)
-            pred = m(x) # problematic as it assumes NUM_SAMPLES/BATCHSIZE = 0
+            pred = m(x)
             loss = loss_fn(pred, y)
             o.zero_grad()
             loss.backward()
@@ -184,7 +196,8 @@ for e in range(START, START+EPOCHS):
                 'epoch': e,
                 'model_state_dict': m.state_dict(),
                 'optimizer_state_dict': o.state_dict(),
-                'loss': train_loss},
+                'train_loss': train_loss,
+                'test_loss': test_loss},
                 CHECKPOINT)
             print('\tsaved progress to: ', CHECKPOINT)
             if logger is not None and train_loss is not None:
@@ -199,6 +212,7 @@ for e in range(START, START+EPOCHS):
                 print("\tno loss accumulated yet")
 
     # validation
+    m.eval()
     print("\nvalidating")
     with torch.no_grad():
         test_loss = 0
@@ -213,14 +227,14 @@ for e in range(START, START+EPOCHS):
             pred = m(x)
             train_loss += loss_fn(pred, y).item()
 
-
 # saving final results
 print("saving upon exit")
 torch.save({
-    'epoch': EPOCHS+START,
+    'epoch': EPOCHS,
     'model_state_dict': m.state_dict(),
     'optimizer_state_dict': o.state_dict(),
-    'loss': train_loss},
+    'train_loss': train_loss,
+    'test_loss': test_loss},
     CHECKPOINT)
 print('\tsaved progress to: ', CHECKPOINT)
 if logger is not None and train_loss is not None:
