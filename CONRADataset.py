@@ -37,28 +37,34 @@ class CONRADataset(Dataset):
         self.X, self.Y, self.P = self.detectSizesFromFilename(self.samples[0][0])
         # Dual Energy implicates 2 energy projections (rest must be material)
         self.numberOfMaterials = len(self.samples[0]) - 2
-
+        train_length, test_length = 0, 0
+        self.length *= self.P
         if precompute:
             if not os.path.isdir(self.torchDump):
                 print("building a faster accessible version of the dataset")
                 os.makedirs(self.torchDump)
-                constructTorchDump(root_dir, self.torchDump, True, device)
+                train_length, test_length = constructTorchDump(root_dir, self.torchDump, True, device)
             elif os.path.isdir(self.torchDump) and len(
-                    glob.glob(self.torchDump + "/**/*.pt", recursive=True)) != self.length * 2 * self.P:
+                    glob.glob(self.torchDump + "/**/*.pt", recursive=True)) != self.length * 2:
                 print("torchdump seems outdated.. deleting and rebuilding...")
                 shutil.rmtree(self.torchDump)
                 os.makedirs(self.torchDump)
-                constructTorchDump(root_dir, self.torchDump, True, device)
+                train_length, test_length = constructTorchDump(root_dir, self.torchDump, True, device)
             else:
                 print("using existing dump at: ", self.torchDump)
-            # select train or test folder in torchdump
-            if train:
-                self.torchDump += "/train"
-            else:
-                self.torchDump += '/test'
+                train_length = len(glob.glob(self.torchDump + "/train/**/*.pt", recursive=True)) // 2
+                test_length = len(glob.glob(self.torchDump + "/test/**/*.pt", recursive=True)) // 2
+
+        # select train or test folder in torchdump
+        if train:
+            self.torchDump += "/train"
+            self.length = train_length
+        else:
+            self.torchDump += '/test'
+            self.length = test_length
 
     def __len__(self):
-        return self.length * self.P
+        return self.length
 
     def __getitem__(self, idx):
         if self.precompute:
@@ -69,10 +75,10 @@ class CONRADataset(Dataset):
             else:
                 return X, Y
         else:
-            files = self.samples[int((idx / (self.P * self.length)) * 4)]
+            files = self.samples[int((idx / (self.length)) * 4)]
             poly, mat = self.readToNumpy(files)
-            mat = mat[:, idx % 200, :, :].reshape(3, self.Y, self.X)
-            poly = poly[:, idx % 200, :, :].reshape(2, self.Y, self.X)
+            mat = mat[:, idx % self.P, :, :].reshape(self.numberOfMaterials, self.Y, self.X)
+            poly = poly[:, idx % self.P, :, :].reshape(2, self.Y, self.X)
 
             mat = torch.tensor(mat, device=self.device)
             poly = torch.tensor(poly, device=self.device)
@@ -85,19 +91,19 @@ class CONRADataset(Dataset):
         :return: numpy arrays in format [C, P, Y, X] C = number of materials/energy projections
         '''
         dt = np.dtype('>f4')
-        poly = np.empty((2, 200, self.Y, self.X))
-        mat = np.empty((self.numberOfMaterials, 200, self.Y, self.X))
+        poly = np.empty((2, self.P, self.Y, self.X))
+        mat = np.empty((self.numberOfMaterials, self.P, self.Y, self.X))
         mat_channel = 0
         for file in files:
             if 'POLY80' in file:
                 f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
-                poly[0] = f.reshape(200, self.Y, self.X)
+                poly[0] = f.reshape(self.P, self.Y, self.X)
             elif 'POLY120' in file:
                 f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
-                poly[1] = f.reshape(200, self.Y, self.X)
+                poly[1] = f.reshape(self.P, self.Y, self.X)
             elif 'MAT' in file:
                 f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
-                mat[mat_channel] = f.reshape(200, self.Y, self.X)
+                mat[mat_channel] = f.reshape(self.P, self.Y, self.X)
                 mat_channel += 1
             else:
                 print("ERROR IN FILE STRUCTURE")

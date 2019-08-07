@@ -44,8 +44,8 @@ parser.add_argument('--tb', action='store_true', default=True,
                     help='enables/disables tensorboard logging')
 parser.add_argument('--seed', type=int, default=1998, metavar='S',
                     help='random seed (default: 1)')
-parser.add_argument('--log-interval', type=int, default=1, metavar='N',
-                    help='how many batches to wait before logging training status')
+# parser.add_argument('--log-interval', type=int, default=1, metavar='N',
+#                     help='how many batches to wait before logging training status')
 parser.add_argument('--save-model', action='store_true', default=True,
                     help='For Saving the current Model (default=True)')
 args = parser.parse_args()
@@ -55,7 +55,7 @@ START = 0  # could enter a checkpoint start epoch
 ITER = args.iterations  # per epoch
 LR = args.lr
 MOM = args.momentum
-LOGInterval = args.log_interval
+# LOGInterval = args.log_interval
 BATCHSIZE = args.batch_size
 TEST_BATCHSIZE = args.test_batch_size
 NUMBER_OF_WORKERS = args.workers
@@ -133,7 +133,7 @@ o = optim.SGD(m.parameters(),
               momentum=MOM,
               weight_decay=0.0005)
 
-loss_fn = nn.BCELoss(reduction='sum')
+loss_fn = nn.MSELoss()
 
 test_loss = None
 train_loss = None
@@ -156,76 +156,79 @@ else:
 '''
 global_step = 0
 # calculating initial loss
+print("calculating initial loss")
 if test_loss is None or train_loss is None:
     m.eval()
     with torch.no_grad():
         test_loss = 0
-        for x, y in testset:
-            x, y = x.to(device), y.to(device)
+        print("testset...")
+        for x, y in tqdm(testset):
+            x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
             pred = m(x)
             test_loss += loss_fn(pred, y).item()
-
+        print("trainset...")
         train_loss = 0
-        for x, y in testset:
-            x, y = x.to(device), y.to(device)
+        for x, y in tqdm(trainingset):
+            x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
             pred = m(x)
             train_loss += loss_fn(pred, y).item()
 
 # printing runtime information
 print("starting training for {} epochs {} iterations each\n\t{} total".format(EPOCHS, ITER, EPOCHS * ITER))
-print("\tlogging interval: {}".format(LOGInterval))
+print("\tbatchsize: {}\n\t".format(BATCHSIZE))
 for e in range(START, START + EPOCHS):
     for i in range(ITER):
         global_step = (e * ITER) + i
 
         # training
         m.train()
-        print("\ntraining gs: ", global_step)
+        iteration_loss = 0
         for x, y in tqdm(trainingset):
-            x, y = x.to(device), y.to(device)
+            x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
             pred = m(x)
             loss = loss_fn(pred, y)
+            iteration_loss += loss.item()
             o.zero_grad()
             loss.backward()
             o.step()
+        print("\niteration {}: --accumulated loss {}".format(global_step, iteration_loss))
 
-        # logging if applicable
-        if global_step % LOGInterval == 0:
-            print("logging")
-            torch.save({
-                'epoch': e,
-                'model_state_dict': m.state_dict(),
-                'optimizer_state_dict': o.state_dict(),
-                'train_loss': train_loss,
-                'test_loss': test_loss},
-                CHECKPOINT)
-            print('\tsaved progress to: ', CHECKPOINT)
-            if logger is not None and train_loss is not None:
-                logger.add_scalar('test_loss', test_loss, global_step=global_step)
-                logger.add_scalar('train_loss', train_loss, global_step=global_step)
-                print("\ttensorboard updated")
-            elif train_loss is not None:
-                print("\tloss of global-step {}: {}".format(global_step, train_loss))
-            elif not useTensorboard:
-                print("\t(tb-logging disabled) test/train loss: {}/{} ".format(test_loss, train_loss))
-            else:
-                print("\tno loss accumulated yet")
-
-    # validation
+    # validation, saving and logging
     m.eval()
     print("\nvalidating")
     with torch.no_grad():
         test_loss = 0
-        for x, y in testset:
-            x, y = x.to(device), y.to(device)
+        print("testset...")
+        for x, y in tqdm(testset):
+            x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
             pred = m(x)
             test_loss += loss_fn(pred, y).item()
-
+        print("trainset...")
         train_loss = 0
-        for x, y in trainingset:
-            x, y = x.to(device), y.to(device)
+        for x, y in tqdm(trainingset):
+            x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
             pred = m(x)
             train_loss += loss_fn(pred, y).item()
+
+        print("logging")
+        torch.save({
+            'epoch': e,
+            'model_state_dict': m.state_dict(),
+            'optimizer_state_dict': o.state_dict(),
+            'train_loss': train_loss,
+            'test_loss': test_loss},
+            CHECKPOINT)
+        print('\tsaved progress to: ', CHECKPOINT)
+        if logger is not None and train_loss is not None:
+            logger.add_scalar('test_loss', test_loss, global_step=global_step)
+            logger.add_scalar('train_loss', train_loss, global_step=global_step)
+            print("\ttensorboard updated")
+        elif train_loss is not None:
+            print("\tloss of global-step {}: {}".format(global_step, train_loss))
+        elif not useTensorboard:
+            print("\t(tb-logging disabled) test/train loss: {}/{} ".format(test_loss, train_loss))
+        else:
+            print("\tno loss accumulated yet")
 
 # saving final results
 print("saving upon exit")

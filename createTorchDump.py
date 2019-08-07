@@ -18,10 +18,11 @@ def constructTorchDump(input, output, split, device):
     # create the directories if needed
     train_output = os.path.join(output, "train")
     test_output = os.path.join(output, "test")
-    split_idx = int(0.7 * numSamples)
+    split_idx = int(0.7 * numSamples * P)
     if split:
         if not os.path.isdir(train_output):
             os.makedirs(train_output)
+            output = train_output
         if not os.path.isdir(test_output):
             os.makedirs(test_output)
 
@@ -30,18 +31,22 @@ def constructTorchDump(input, output, split, device):
     print("precomputing dataset to: {}".format(os.path.abspath(output)))
     for i, sample in enumerate(tqdm(samples)):
         poly, mat = readToNumpy(sample, X, Y, P, CM, CP)
-        if i < split_idx and split:
-            output = train_output
-        if i >= split_idx and split:
-            i -= split_idx
-            output = test_output
         for p in range(P):
             matp = mat[:, p, :, :].reshape(CM, Y, X)
             polyp = poly[:, p, :, :].reshape(CP, Y, X)
             matp = torch.tensor(matp, device=device)
             polyp = torch.tensor(polyp, device=device)
-            torch.save(matp, output + "/mat_{}.pt".format((i * P) + p))
-            torch.save(polyp, output + "/poly_{}.pt".format((i * P) + p))
+            # splitting the data
+            sample_idx = (i * P) + p
+            if sample_idx >= split_idx and split:
+                sample_idx -= split_idx
+                output = test_output
+            torch.save(matp, output + "/mat_{}.pt".format(sample_idx))
+            torch.save(polyp, output + "/poly_{}.pt".format(sample_idx))
+    if split:
+        return split_idx, (numSamples*P)-split_idx
+    else:
+        return numSamples * P
 
 def readToNumpy(files, X, Y, P, CM, CP):
     '''
