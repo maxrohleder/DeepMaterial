@@ -16,6 +16,9 @@ class ConvModel(Module):
         x3 = F.relu(self.fc1(x2))
         return x3
 
+    def _get_name(self):
+        return "SimpleConv"
+
 class simpleFC(Module):
     def __init__(self):
         super(simpleFC, self).__init__()
