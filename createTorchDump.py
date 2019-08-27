@@ -5,20 +5,22 @@ import glob
 from tqdm import tqdm
 import argparse
 
-def constructTorchDump(input, output, split, device):
 
-    numSamples = sum(os.path.isdir(os.path.join(input, i)) and "_" in i for i in os.listdir(input))
-    print("detected {} samples in dir \"{}\"".format(numSamples, os.path.abspath(input)))
+def constructTorchDump(inp, output, split, dev):
+    scans = [i for i in os.listdir(os.path.abspath(inp)) if os.path.isdir(os.path.join(os.path.abspath(inp), i)) and "_" in i]
+    print("detected {} samples in dir \"{}\"".format(len(scans), os.path.abspath(inp)))
+    if input("continue? [y], n") == 'n':
+        return
     samples = []
-    for i in range(numSamples):
-        naming_scheme = "{}/*_{}/**/*.raw".format(input, i)
-        samples.append([n for n in glob.glob(naming_scheme, recursive=True)])
+    for scan in scans:
+        naming_scheme = "{}/**/*.raw".format(scan)
+        samples.append([os.path.abspath(n) for n in glob.glob(naming_scheme, recursive=True)])
     X, Y, P = detectSizesFromFilename(samples[0][0])
 
     # create the directories if needed
     train_output = os.path.join(output, "train")
     test_output = os.path.join(output, "test")
-    split_idx = int(0.7 * numSamples * P)
+    split_idx = int(0.7 * len(scans) * P)
     if split:
         if not os.path.isdir(train_output):
             os.makedirs(train_output)
@@ -27,26 +29,27 @@ def constructTorchDump(input, output, split, device):
             os.makedirs(test_output)
 
     CP = 2
-    CM = len(samples[0]) - CP
+    CM = 2
     print("precomputing dataset to: {}".format(os.path.abspath(output)))
     for i, sample in enumerate(tqdm(samples)):
         poly, mat = readToNumpy(sample, X, Y, P, CM, CP)
         for p in range(P):
             matp = mat[:, p, :, :].reshape(CM, Y, X)
             polyp = poly[:, p, :, :].reshape(CP, Y, X)
-            matp = torch.tensor(matp, device=device)
-            polyp = torch.tensor(polyp, device=device)
+            matp = torch.tensor(matp, device=dev)
+            polyp = torch.tensor(polyp, device=dev)
             # splitting the data
             sample_idx = (i * P) + p
             if sample_idx >= split_idx and split:
                 sample_idx -= split_idx
                 output = test_output
-            torch.save(matp, output + "/mat_{}.pt".format(sample_idx))
-            torch.save(polyp, output + "/poly_{}.pt".format(sample_idx))
+            torch.save(matp, os.path.join(os.path.abspath(output), "mat_{}.pt".format(sample_idx)))
+            torch.save(matp, os.path.join(os.path.abspath(output), "poly_{}.pt".format(sample_idx)))
     if split:
-        return split_idx, (numSamples*P)-split_idx
+        return split_idx, (len(scans) * P) - split_idx
     else:
-        return numSamples * P
+        return len(scans) * P
+
 
 def readToNumpy(files, X, Y, P, CM, CP):
     '''
@@ -73,6 +76,7 @@ def readToNumpy(files, X, Y, P, CM, CP):
             print("ERROR IN FILE STRUCTURE")
     return poly, mat
 
+
 def detectSizesFromFilename(filename):
     pa, filename = os.path.split(filename)
     fle, ext = os.path.splitext(filename)
@@ -82,6 +86,7 @@ def detectSizesFromFilename(filename):
     P = int(parts[2].split('.')[0])
     return X, Y, P
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='torch dump creation utility')
     parser.add_argument('--in', dest="in_dir", default='/home/mr/Documents/bachelor/data/simulation',
@@ -90,10 +95,9 @@ if __name__ == "__main__":
                         help='folder containing test and training sets of MNIST')
     parser.add_argument('--cpu', action='store_true', default=False,
                         help='loades the data to cpu not gpu')
-    parser.add_argument('--split', action='store_true', default=True,
+    parser.add_argument('--nosplit', action='store_false', default=True,
                         help='creates two subdirs and splits the data into them')
     args = parser.parse_args()
-    device = "cpu" if args.cpu else "cuda:0"
+    device = "cpu" if args.cpu or not torch.cuda.is_available() else "cuda:0"
 
-    constructTorchDump(args.in_dir, args.out, args.split, device)
-
+    constructTorchDump(args.in_dir, args.out, args.nosplit, device)

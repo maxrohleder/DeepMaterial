@@ -3,6 +3,7 @@ import time
 from torch import nn, optim
 
 from CONRADataset import CONRADataset
+from models.convNet import simpleConvNet
 from models.unet import UNet
 
 from torch.utils.data import DataLoader
@@ -96,17 +97,20 @@ def train(args):
                              True,
                              device=device,
                              precompute=True,
-                             transform=normalize)
+                             transform=None)
     testdata = CONRADataset(DATA_FOLDER,
                             False,
                             device=device,
                             precompute=True,
-                            transform=normalize)
+                            transform=None)
 
     trainingset = DataLoader(traindata, **train_params)
     testset = DataLoader(testdata, **test_params)
 
-    m = UNet(2, 2).to(device)
+    if args.model == "unet":
+        m = UNet(2, 2).to(device)
+    else:
+        m = simpleConvNet(2, 2).to(device)
 
     o = optim.SGD(m.parameters(),
                   lr=LR,
@@ -186,6 +190,18 @@ def train(args):
         if logger is not None and train_loss is not None:
             logger.add_scalar('test_loss', test_loss, global_step=global_step)
             logger.add_scalar('train_loss', train_loss, global_step=global_step)
+            iod, wat = None, None
+            with torch.no_grad():
+                for x, y in testset:
+                    x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
+                    pred = m(x)
+                    iod = pred.cpu().numpy()[0]
+                    gt = y.cpu().numpy()[0]
+                    # wat = pred.cpu().numpy()[0, 0, :, :]
+                    break
+            logger.add_image("iodine-prediction", iod, global_step=global_step)
+            logger.add_image("ground-truth", gt, global_step=global_step)
+            # logger.add_image("water-prediction", wat)
             print("\ttensorboard updated")
         elif train_loss is not None:
             print("\tloss of global-step {}: {}".format(global_step, train_loss))
@@ -216,6 +232,8 @@ if __name__ == "__main__":
                         help='folder containing test and training sets of MNIST')
     parser.add_argument('--run', '-r', required=True,
                         help='target folder which will hold model weights and tb logs')
+    parser.add_argument('--model', '-m', default='unet',
+                        help='model to use. options are: [<unet>], <simpleconv>')
     parser.add_argument('--name', default='checkpoint',
                         help='naming of checkpoint saved')
     parser.add_argument('--batch-size', type=int, default=2, metavar='N',

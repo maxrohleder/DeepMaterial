@@ -87,6 +87,7 @@ def process_scroll(event):
     fig = event.canvas.figure
     ax = fig.axes[0]
     scroll(ax, int(event.step))
+    print(event.step)
     fig.canvas.draw()
 
 
@@ -115,9 +116,9 @@ class multi_slice_viewer:
 
 
 if __name__ == "__main__":
-    img = materialDecomposer("/home/mr/Documents/bachelor/data/simulation/0816175249_2")
+    img = materialDecomposer("/home/mr/Documents/bachelor/data/simulation/0826183857_1")
     # plt.imshow(img[0])
-    #v = multi_slice_viewer(img, "POLY 120")
-    #v.show()
+    v = multi_slice_viewer(img, "POLY 120")
+    v.show()
 
     input("to end display press any key")

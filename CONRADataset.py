@@ -27,13 +27,14 @@ class CONRADataset(Dataset):
         self.precompute = precompute
         self.torchDump = os.path.join(root_dir, "torch")
         self.device = torch.device(device)
-        self.length = sum(os.path.isdir(os.path.join(root_dir, d)) and "_" in d for d in os.listdir(root_dir))
+        scans = [os.path.join(root_dir, i) for i in os.listdir(os.path.abspath(root_dir)) if os.path.isdir(os.path.join(os.path.abspath(root_dir), i)) and "_" in i]
+        self.length = len(scans)
         self.transform = transform
         # detect number of samples
         self.samples = []
-        for i in range(self.length):
-            naming_scheme = "{}/*_{}/**/*.raw".format(root_dir, i)
-            self.samples.append([n for n in glob.glob(naming_scheme, recursive=True)])
+        for scan in scans:
+            naming_scheme = "{}/**/*.raw".format(scan)
+            self.samples.append([os.path.abspath(n) for n in glob.glob(naming_scheme, recursive=True)])
         self.X, self.Y, self.P = self.detectSizesFromFilename(self.samples[0][0])
         # Dual Energy implicates 2 energy projections (rest must be material)
         self.numberOfMaterials = len(self.samples[0]) - 2
@@ -51,7 +52,10 @@ class CONRADataset(Dataset):
                 os.makedirs(self.torchDump)
                 train_length, test_length = constructTorchDump(root_dir, self.torchDump, True, device)
             else:
-                print("using existing dump at: ", self.torchDump)
+                if train:
+                    print("using existing dump at: ", self.torchDump + "/train")
+                else:
+                    print("using existing dump at: ", self.torchDump + "/test")
                 train_length = len(glob.glob(self.torchDump + "/train/**/*.pt", recursive=True)) // 2
                 test_length = len(glob.glob(self.torchDump + "/test/**/*.pt", recursive=True)) // 2
 
@@ -68,8 +72,8 @@ class CONRADataset(Dataset):
 
     def __getitem__(self, idx):
         if self.precompute:
-            X, Y = torch.load(self.torchDump + "/poly_{}.pt".format(idx)), \
-                   torch.load(self.torchDump + "/mat_{}.pt".format(idx))
+            X, Y = torch.load(self.torchDump + "/poly_{}.pt".format(idx), map_location='cpu'), \
+                   torch.load(self.torchDump + "/mat_{}.pt".format(idx), map_location='cpu')
             if self.transform is not None:
                 return self.transform(X), self.transform(Y)
             else:
@@ -120,12 +124,11 @@ class CONRADataset(Dataset):
 
 if __name__ == "__main__":
 
-    # use_cuda = torch.cuda.is_available()
-    use_cuda = False
+    use_cuda = torch.cuda.is_available()
     device = "cuda:0" if use_cuda else "cpu"
 
-    dp = CONRADataset("/home/mr/Documents/bachelor/data/simulation", True, precompute=True, device=device)
-    dnp = CONRADataset("/home/mr/Documents/bachelor/data/simulation", False, precompute=True, device=device)
+    dp = CONRADataset("/home/mr/Documents/bachelor/data/simulation/RandomGeometries", True, precompute=True, device=device)
+    dnp = CONRADataset("/home/mr/Documents/bachelor/data/simulation/RandomGeometries", False, precompute=True, device=device)
 
     a, b = dp[0]
 
