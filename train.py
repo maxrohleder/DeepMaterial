@@ -97,12 +97,12 @@ def train(args):
                              True,
                              device=device,
                              precompute=True,
-                             transform=None)
+                             transform=normalize)
     testdata = CONRADataset(DATA_FOLDER,
                             False,
                             device=device,
                             precompute=True,
-                            transform=None)
+                            transform=normalize)
 
     trainingset = DataLoader(traindata, **train_params)
     testset = DataLoader(testdata, **test_params)
