@@ -1,0 +1,13 @@
+name: DeepMaterial
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - pytorch
+  - tqdm
+  - torchvision
+  - numpy
+  - argparse
+  - pip:
+      -tb-nightly

@@ -31,6 +31,9 @@ class CONRADataset(Dataset):
         self.length = len(scans)
         self.transform = transform
         # detect number of samples
+        if len(scans) == 0 and not os.path.isdir(self.torchDump):
+            print("no scans or torchdump detected. aborting..")
+            exit()
         self.samples = []
         for scan in scans:
             naming_scheme = "{}/**/*.raw".format(scan)

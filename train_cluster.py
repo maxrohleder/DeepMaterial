@@ -11,7 +11,6 @@ from torchvision import transforms
 
 import numpy as np
 from tqdm import tqdm
-from tensorboard import program
 import os
 import argparse
 
@@ -286,10 +285,7 @@ if __name__ == "__main__":
     logger = None
     if args.tb:
         logger = SummaryWriter(log_dir=TB_DIR)
-        tb = program.TensorBoard()
-        tb.configure(argv=[None, '--logdir', TB_DIR])
-        tb_url = tb.launch()
-        print("tensorboard living on ", tb_url)
+        print("tensorboard logs at: " + TB_DIR)
     else:
         print('tensorboard logging turned off')
     try:

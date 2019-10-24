@@ -9,11 +9,11 @@ import argparse
 def constructTorchDump(inp, output, split, dev):
     scans = [i for i in os.listdir(os.path.abspath(inp)) if os.path.isdir(os.path.join(os.path.abspath(inp), i)) and "_" in i]
     print("detected {} samples in dir \"{}\"".format(len(scans), os.path.abspath(inp)))
-    if input("continue? [y], n") == 'n':
-        return
+    # if input("continue? [y], n") == 'n':
+    #     return
     samples = []
     for scan in scans:
-        naming_scheme = "{}/**/*.raw".format(scan)
+        naming_scheme = "{}/**/*.raw".format(os.path.join(inp, scan))
         samples.append([os.path.abspath(n) for n in glob.glob(naming_scheme, recursive=True)])
     X, Y, P = detectSizesFromFilename(samples[0][0])
 
@@ -44,7 +44,7 @@ def constructTorchDump(inp, output, split, dev):
                 sample_idx -= split_idx
                 output = test_output
             torch.save(matp, os.path.join(os.path.abspath(output), "mat_{}.pt".format(sample_idx)))
-            torch.save(matp, os.path.join(os.path.abspath(output), "poly_{}.pt".format(sample_idx)))
+            torch.save(polyp, os.path.join(os.path.abspath(output), "poly_{}.pt".format(sample_idx)))
     if split:
         return split_idx, (len(scans) * P) - split_idx
     else:
