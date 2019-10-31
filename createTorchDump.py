@@ -29,7 +29,7 @@ def constructTorchDump(inp, output, split, dev):
             os.makedirs(test_output)
 
     CP = 2
-    CM = 2
+    CM = 2 # channel 0 -> iodine, 1 -> water
     print("precomputing dataset to: {}".format(os.path.abspath(output)))
     for i, sample in enumerate(tqdm(samples)):
         poly, mat = readToNumpy(sample, X, Y, P, CM, CP)
@@ -55,12 +55,11 @@ def readToNumpy(files, X, Y, P, CM, CP):
     '''
     reads in big endian 32 bit float raw files and outputs numpy data
     :param files: string array containing the paths to poly and mat files
-    :return: numpy arrays in format [C, P, Y, X] C = number of materials/energy projections
+    :return: poly, mat: numpy arrays in format [C, P, Y, X] #C = number of materials/energy projections (iodine:0, water:1)
     '''
     dt = np.dtype('>f4')
     poly = np.empty((CP, P, Y, X))
     mat = np.empty((CM, P, Y, X))
-    mat_channel = 0
     for file in files:
         if 'POLY80' in file:
             f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
@@ -68,12 +67,15 @@ def readToNumpy(files, X, Y, P, CM, CP):
         elif 'POLY120' in file:
             f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
             poly[1] = f.reshape(P, Y, X)
-        elif 'MAT' in file:
+        elif 'iodine' in file:
             f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
-            mat[mat_channel] = f.reshape(P, Y, X)
-            mat_channel += 1
+            mat[0] = f.reshape(P, Y, X)
+        elif 'water' in file:
+            f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
+            mat[1] = f.reshape(P, Y, X)
         else:
             print("ERROR IN FILE STRUCTURE")
+            exit(1)
     return poly, mat
 
 

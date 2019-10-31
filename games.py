@@ -17,6 +17,7 @@ def createOverview(additionalLOGS, targetfolder):
     # input is numpy dataformat np.float32 used by torch
 
     filepattern = additionalLOGS + '/**/*.npy'
+    print("found {} files matching the following pattern:".format(len(os.listdir(additionalLOGS))))
     print(filepattern)
     input("continue?")
 
@@ -54,8 +55,8 @@ def createOverview(additionalLOGS, targetfolder):
 
 
 if __name__ == "__main__":
-    f = "/home/cip/medtech2016/eh59uqiv/data/run/overfitting/additionalLOGS"
-    t = "/home/cip/medtech2016/eh59uqiv/data/run/overfitting/target"
+    f = "/Users/mr/bachelor/data/run/overf_MECT_iodOnly/additionalLOGS"
+    t = "/Users/mr/bachelor/data/run/overf_MECT_iodOnly/results"
     if not os.path.isdir(t):
         os.makedirs(t)
 

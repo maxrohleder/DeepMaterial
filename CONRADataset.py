@@ -77,8 +77,10 @@ class CONRADataset(Dataset):
         if self.precompute:
             X, Y = torch.load(self.torchDump + "/poly_{}.pt".format(idx), map_location='cpu'), \
                    torch.load(self.torchDump + "/mat_{}.pt".format(idx), map_location='cpu')
+
             if self.transform is not None:
-                return self.transform(X), self.transform(Y)
+                # to normalize the labels (cm) see topic numerical instability of iodine
+                return X, self.transform(Y)
             else:
                 return X, Y
         else:

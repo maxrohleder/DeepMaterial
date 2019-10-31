@@ -10,6 +10,7 @@ import torch
 from torchvision import transforms
 
 import numpy as np
+import matplotlib.pyplot as plt
 from tqdm import tqdm
 from tensorboard import program
 import os
@@ -34,6 +35,36 @@ def calculate_loss(set, loss_fn, length_set, dev, model):
             pred = model(x)
             l += float(loss_fn(pred, y).item())
     return l/length_set
+
+def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device):
+    if datasettype == 'CONRADataset':
+        # computing mean and std over trainingset
+        ds = CONRADataset(DATAFOLDER,
+                         True,
+                         device=device,
+                         precompute=True,
+                         transform=None)
+        trainingset = DataLoader(ds, **load_params)
+
+        # sticking to convention iod -> 0, water -> 1
+        mean = np.zeros(2)
+        std = np.zeros(2)
+
+        counter = 0
+        # iterating and summing all mean and std
+        for _, y in tqdm(trainingset):
+            # y in shape [b, c, y, x]
+            y = y.to(device=device, dtype=torch.float)
+            iod = y[:, 0, :, :]
+            water = y[:, 1, :, :]
+            mean[0] += torch.mean(iod)
+            mean[1] += torch.mean(water)
+            std[0] += torch.std(iod)
+            std[1] += torch.std(water)
+            counter += 1
+        return mean/counter, std/counter
+    print("[train.py/computeMeanStd: dataset not recognized")
+    exit(1)
 
 # main algorithm configured by argparser. see main method of this file.
 def train(args):
@@ -88,20 +119,23 @@ def train(args):
     '''
     ----------------loading model and checkpoints---------------------
     '''
+    print('computing mean and std over trainingset')
+    # computes mean and std over all ground truths in dataset to tackle the problem of numerical insignificance
+    mean, std = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device)
+    print('iodine (mean/std): {}\t{}'.format(mean[0], std[0]))
+    print('water (mean/std): {}\t{}'.format(mean[1], std[1]))
+    labelsNorm = transforms.Normalize(mean=mean, std=std)
     print("loading datasets to ram")
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-
     traindata = CONRADataset(DATA_FOLDER,
                              True,
                              device=device,
                              precompute=True,
-                             transform=None)
+                             transform=labelsNorm)
     testdata = CONRADataset(DATA_FOLDER,
                             False,
                             device=device,
                             precompute=True,
-                            transform=None)
+                            transform=labelsNorm)
 
     trainingset = DataLoader(traindata, **train_params)
     testset = DataLoader(testdata, **test_params)
@@ -193,15 +227,21 @@ def train(args):
                 pred = m(x)
                 iod = pred.cpu().numpy()[0, 0, :, :]
                 water = pred.cpu().numpy()[0, 1, :, :]
-                gtiod = y.cpu().numpy()[0, 1, :, :]
-                gtwater = y.cpu().numpy()[0, 0, :, :]
+                gtiod = y.cpu().numpy()[0, 0, :, :]
+                gtwater = y.cpu().numpy()[0, 1, :, :]
                 IMAGE_LOG_DIR = os.path.join(CUSTOM_LOG_DIR, str(global_step))
                 if not os.path.isdir(IMAGE_LOG_DIR):
                     os.makedirs(IMAGE_LOG_DIR)
-                np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
-                np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)
-                np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.npy'), gtiod)
-                np.save(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.npy'), gtwater)
+
+                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.png'), iod, cmap='gray')
+                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.png'), water, cmap='gray')
+                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.png'), gtiod, cmap='gray')
+                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.png'), gtwater, cmap='gray')
+
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.npy'), gtiod)
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.npy'), gtwater)
                 break
         print("saved truth and prediction in shape " + str(iod.shape))
         print("logging")
