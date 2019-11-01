@@ -158,17 +158,26 @@ def train(args):
     # TODO recognice latest checkpoint and load it
     if len(os.listdir(WEIGHT_DIR)) != 0:
         checkpoints = os.listdir(WEIGHT_DIR)
+        checkDir = {}
+        latestCheckpoint = 0
+        toUse = 0
         for i, checkpoint in enumerate(checkpoints):
-            print("[{}] {}".format(i, checkpoint))
-        idx = input("select checkpoint to use: ")
-        checkpoint = torch.load(os.path.join(WEIGHT_DIR, checkpoints[int(idx)]))
+            stepOfCheckpoint = int(checkpoint.split(str(args.model) + str(args.name))[-1].split('.pt')[0])
+            checkDir[stepOfCheckpoint] = checkpoint
+            latestCheckpoint = max(latestCheckpoint, stepOfCheckpoint)
+            print("[{}] {}".format(stepOfCheckpoint, checkpoint))
+        if 'faui' in os.uname()[1]:
+            toUse = int(input("select checkpoint to use: "))
+        else:
+            toUse = latestCheckpoint
+        checkpoint = torch.load(os.path.join(WEIGHT_DIR, checkDir[toUse]))
         m.load_state_dict(checkpoint['model_state_dict'])
         m.to(device) # pushing weights to gpu
         o.load_state_dict(checkpoint['optimizer_state_dict'])
         train_loss = checkpoint['train_loss']
         test_loss = checkpoint['test_loss']
         START = checkpoint['epoch']
-        print("using checkpoint {}:\n\tloss(train/test): {}/{}".format(idx, train_loss, test_loss))
+        print("using checkpoint {}:\n\tloss(train/test): {}/{}".format(toUse, train_loss, test_loss))
     else:
         print("starting from scratch")
 
@@ -238,16 +247,23 @@ def train(args):
                 plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.png'), gtiod, cmap='gray')
                 plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.png'), gtwater, cmap='gray')
 
+                plt.plot(iod[240])
+                plt.plot(gtiod[240])
+                plt.ylim((-1.1, 1.1))
+                plt.savefig(os.path.join(IMAGE_LOG_DIR, 'iodPLOT' + str(global_step) + '.png'))
+                #plt.plot(water[240], np.arange(-1.1, 1.1), '-', gtwater[240], np.arange(-1.1, 1.1), ':')
+                #plt.savefig(IMAGE_LOG_DIR, 'iodPLOT' + str(global_step) + '.png')
+
                 # np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.npy'), gtiod)
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)f
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_st9ep) + '.npy'), gtiod)
                 # np.save(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.npy'), gtwater)
                 break
         print("saved truth and prediction in shape " + str(iod.shape))
         print("logging")
         CHECKPOINT = os.path.join(WEIGHT_DIR, str(args.model) + str(args.name) + str(global_step) + ".pt")
         torch.save({
-            'epoch': e,
+            'epoch': e+1, # end of this epoch; so resume at next.
             'model_state_dict': m.state_dict(),
             'optimizer_state_dict': o.state_dict(),
             'train_loss': train_loss,
