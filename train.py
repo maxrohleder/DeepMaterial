@@ -1,9 +1,8 @@
-from torch import nn, optim
-
 from CONRADataset import CONRADataset
 from models.convNet import simpleConvNet
 from models.unet import UNet
 
+from torch import nn, optim
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import torch
@@ -12,10 +11,11 @@ from torchvision import transforms
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-from tensorboard import program
 import os
 import argparse
 
+if 'faui' in os.uname()[1]:
+    from tensorboard import program
 
 # helper function
 def calculate_loss(set, loss_fn, length_set, dev, model):
@@ -36,14 +36,14 @@ def calculate_loss(set, loss_fn, length_set, dev, model):
             l += float(loss_fn(pred, y).item())
     return l/length_set
 
-def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device):
+def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, transform=None):
     if datasettype == 'CONRADataset':
         # computing mean and std over trainingset
         ds = CONRADataset(DATAFOLDER,
                          True,
                          device=device,
                          precompute=True,
-                         transform=None)
+                         transform=transform)
         trainingset = DataLoader(ds, **load_params)
 
         # sticking to convention iod -> 0, water -> 1
@@ -71,6 +71,7 @@ def train(args):
     '''
     -------------------------Hyperparameters--------------------------
     '''
+    global std, mean
     EPOCHS = args.epochs
     START = 0  # could enter a checkpoint start epoch
     ITER = args.iterations  # per epoch
@@ -119,13 +120,23 @@ def train(args):
     '''
     ----------------loading model and checkpoints---------------------
     '''
-    print('computing mean and std over trainingset')
-    # computes mean and std over all ground truths in dataset to tackle the problem of numerical insignificance
-    mean, std = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device)
-    print('iodine (mean/std): {}\t{}'.format(mean[0], std[0]))
-    print('water (mean/std): {}\t{}'.format(mean[1], std[1]))
-    labelsNorm = transforms.Normalize(mean=mean, std=std)
-    print("loading datasets to ram")
+    labelsNorm = None
+    # normalizing on a trainingset wide mean and std
+    if args.norm == 'normalize':
+        print('computing mean and std over trainingset')
+        # computes mean and std over all ground truths in dataset to tackle the problem of numerical insignificance
+        mean, std = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device)
+        print('iodine (mean/std): {}\t{}'.format(mean[0], std[0]))
+        print('water (mean/std): {}\t{}'.format(mean[1], std[1]))
+        labelsNorm = transforms.Normalize(mean=mean, std=std)
+        m2, s2 = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device, transform=labelsNorm)
+        print("new mean and std are (m/s): {} / {}".format(m2, s2))
+
+    # scaling only the iodine domain to tackle the problem of low iodine numbers
+    if args.norm is 'iod1000':
+        labelsNorm = int(1000)
+
+
     traindata = CONRADataset(DATA_FOLDER,
                              True,
                              device=device,
@@ -147,25 +158,23 @@ def train(args):
 
     o = optim.SGD(m.parameters(),
                   lr=LR,
-                  momentum=MOM,
-                  weight_decay=0.0005)
+                  momentum=MOM)
 
     loss_fn = nn.MSELoss()
 
     test_loss = None
     train_loss = None
 
-    # TODO recognice latest checkpoint and load it
     if len(os.listdir(WEIGHT_DIR)) != 0:
         checkpoints = os.listdir(WEIGHT_DIR)
         checkDir = {}
         latestCheckpoint = 0
-        toUse = 0
         for i, checkpoint in enumerate(checkpoints):
             stepOfCheckpoint = int(checkpoint.split(str(args.model) + str(args.name))[-1].split('.pt')[0])
             checkDir[stepOfCheckpoint] = checkpoint
             latestCheckpoint = max(latestCheckpoint, stepOfCheckpoint)
             print("[{}] {}".format(stepOfCheckpoint, checkpoint))
+        # if on development machine, prompt for input, else just take the most recent one
         if 'faui' in os.uname()[1]:
             toUse = int(input("select checkpoint to use: "))
         else:
@@ -197,7 +206,9 @@ def train(args):
 
     # printing runtime information
     print("starting training at {} for {} epochs {} iterations each\n\t{} total".format(START, EPOCHS, ITER, EPOCHS * ITER))
+
     print("\tbatchsize: {}\n\tloss: {}\n\twill save results to \"{}\"".format(BATCHSIZE, train_loss, CHECKPOINT))
+    print("\tmodel: {}\n\tlearningrate: {}\n\tmomentum: {}\n\tnorming output space: {}".format(args.model, LR, MOM, args.norm))
 
     #start actual training loops
     for e in range(START, START + EPOCHS):
@@ -228,7 +239,6 @@ def train(args):
 
         print("advanced metrics")
         #TODO come up with some metrics to evaluate image quality
-        iod, wat = None, None
         with torch.no_grad():
             for x, y in testset:
                 # x, y in shape[2,2,480,620] [b,c,h,w]
@@ -238,6 +248,14 @@ def train(args):
                 water = pred.cpu().numpy()[0, 1, :, :]
                 gtiod = y.cpu().numpy()[0, 0, :, :]
                 gtwater = y.cpu().numpy()[0, 1, :, :]
+                if(args.norm is "normalize"):
+                    iod = (iod * std[0]) + mean[0]
+                    water = (water * std[1]) + mean[1]
+                    gtiod = (gtiod * std[0]) + mean[0]
+                    gtwater = (gtwater * std[1]) + mean[1]
+                if(args.norm is "iod1000"):
+                    iod /= 1000
+                    gtiod /= 1000
                 IMAGE_LOG_DIR = os.path.join(CUSTOM_LOG_DIR, str(global_step))
                 if not os.path.isdir(IMAGE_LOG_DIR):
                     os.makedirs(IMAGE_LOG_DIR)
@@ -247,16 +265,27 @@ def train(args):
                 plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.png'), gtiod, cmap='gray')
                 plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.png'), gtwater, cmap='gray')
 
-                plt.plot(iod[240])
-                plt.plot(gtiod[240])
-                plt.ylim((-1.1, 1.1))
-                plt.savefig(os.path.join(IMAGE_LOG_DIR, 'iodPLOT' + str(global_step) + '.png'))
-                #plt.plot(water[240], np.arange(-1.1, 1.1), '-', gtwater[240], np.arange(-1.1, 1.1), ':')
-                #plt.savefig(IMAGE_LOG_DIR, 'iodPLOT' + str(global_step) + '.png')
+                print("creating and saving profile plot at 240")
+                fig2, (ax1, ax2) = plt.subplots(nrows=2,
+                                                ncols=1)  # plot water and iodine in one plot
+                ax1.plot(iod[240])
+                ax1.plot(gtiod[240])
+                ax1.title.set_text("iodine horizontal profile")
+                ax1.set_ylabel("mm iodine")
+                ax1.set_ylim([np.min(gtiod), np.max(gtiod)])
+                print("max value in gtiod is {}".format(np.max(gtiod)))
+                ax2.plot(water[240])
+                ax2.plot(gtwater[240])
+                ax2.title.set_text("water horizontal profile")
+                ax2.set_ylabel("mm water")
+                ax2.set_ylim([np.min(gtwater), np.max(gtwater)])
+
+                plt.subplots_adjust(wspace=0.7)
+                plt.savefig(os.path.join(IMAGE_LOG_DIR, 'ProfilePlots' + str(global_step) + '.png'))
 
                 # np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
                 # np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)f
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_st9ep) + '.npy'), gtiod)
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.npy'), gtiod)
                 # np.save(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.npy'), gtwater)
                 break
         print("saved truth and prediction in shape " + str(iod.shape))
@@ -307,9 +336,11 @@ if __name__ == "__main__":
     parser.add_argument('--run', '-r', required=True,
                         help='target folder which will hold model weights and logs')
     parser.add_argument('--model', '-m', default='unet',
-                        help='model to use. options are: [<unet>], <simpleconv>')
+                        help='model to use. options are: [<unet>], <conv>')
     parser.add_argument('--name', default='checkpoint',
                         help='naming of checkpoint saved')
+    parser.add_argument('--norm', required=False, default='normalize',
+                        help='choose to normalize or convert iodine images to um. <normalize>, <iod1000>, <subtractmean>')
     parser.add_argument('--batch-size', type=int, default=2, metavar='N',
                         help='input batch size for training (default: 2)')
     parser.add_argument('--test-batch-size', type=int, default=2, metavar='N',
@@ -326,12 +357,7 @@ if __name__ == "__main__":
                         help='SGD momentum (default: 0.5)')
     parser.add_argument('--tb', action='store_false', default=True,
                         help='enables/disables tensorboard logging')
-    # parser.add_argument('--seed', type=int, default=1998, metavar='S',
-    #                     help='random seed (default: 1)')
-    # parser.add_argument('--log-interval', type=int, default=1, metavar='N',
-    #                     help='how many batches to wait before logging training status')
-    parser.add_argument('--save-model', action='store_true', default=True,
-                        help='For Saving the current Model (default=True)')
+
     args = parser.parse_args()
     # handle tensorboard outside of train() to be able to stop the tensorboard process
     TB_DIR = os.path.join(args.run, "tblog")
@@ -342,10 +368,11 @@ if __name__ == "__main__":
     logger = None
     if args.tb:
         logger = SummaryWriter(log_dir=TB_DIR)
-        tb = program.TensorBoard()
-        tb.configure(argv=[None, '--logdir', TB_DIR])
-        tb_url = tb.launch()
-        print("tensorboard living on ", tb_url)
+        #tb = program.TensorBoard()
+        #tb.configure(argv=[None, '--logdir', TB_DIR])
+        #tb_url = tb.launch()
+        #print("tensorboard living on ", tb_url)
+        print("tensorboard logs are written to ", TB_DIR)
     else:
         print('tensorboard logging turned off')
     try:

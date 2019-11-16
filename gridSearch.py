@@ -10,10 +10,11 @@ import torch
 from torchvision import transforms
 
 import numpy as np
+import matplotlib.pyplot as plt
 from tqdm import tqdm
+from tensorboard import program
 import os
 import argparse
-
 
 # helper function
 def calculate_loss(set, loss_fn, length_set, dev, model):
@@ -34,14 +35,46 @@ def calculate_loss(set, loss_fn, length_set, dev, model):
             l += float(loss_fn(pred, y).item())
     return l/length_set
 
+def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, transform=None):
+    if datasettype == 'CONRADataset':
+        # computing mean and std over trainingset
+        ds = CONRADataset(DATAFOLDER,
+                         True,
+                         device=device,
+                         precompute=True,
+                         transform=transform)
+        trainingset = DataLoader(ds, **load_params)
+
+        # sticking to convention iod -> 0, water -> 1
+        mean = np.zeros(2)
+        std = np.zeros(2)
+
+        counter = 0
+        # iterating and summing all mean and std
+        for _, y in tqdm(trainingset):
+            # y in shape [b, c, y, x]
+            y = y.to(device=device, dtype=torch.float)
+            iod = y[:, 0, :, :]
+            water = y[:, 1, :, :]
+            mean[0] += torch.mean(iod)
+            mean[1] += torch.mean(water)
+            std[0] += torch.std(iod)
+            std[1] += torch.std(water)
+            counter += 1
+        return mean/counter, std/counter
+    print("[train.py/computeMeanStd: dataset not recognized")
+    exit(1)
+
 # main algorithm configured by argparser. see main method of this file.
 def train(args):
     '''
     -------------------------Hyperparameters--------------------------
     '''
+    global std, mean
     EPOCHS = args.epochs
     START = 0  # could enter a checkpoint start epoch
     ITER = args.iterations  # per epoch
+    startITER = 0
     LR = args.lr
     MOM = args.momentum
     # LOGInterval = args.log_interval
@@ -87,20 +120,33 @@ def train(args):
     '''
     ----------------loading model and checkpoints---------------------
     '''
-    print("loading datasets to ram")
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
+    labelsNorm = None
+    # normalizing on a trainingset wide mean and std
+    if args.norm == 'normalize':
+        print('computing mean and std over trainingset')
+        # computes mean and std over all ground truths in dataset to tackle the problem of numerical insignificance
+        mean, std = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device)
+        print('iodine (mean/std): {}\t{}'.format(mean[0], std[0]))
+        print('water (mean/std): {}\t{}'.format(mean[1], std[1]))
+        labelsNorm = transforms.Normalize(mean=mean, std=std)
+        m2, s2 = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device, transform=labelsNorm)
+        print("new mean and std are (m/s): {} / {}".format(m2, s2))
+
+    # scaling only the iodine domain to tackle the problem of low iodine numbers
+    if args.norm is 'iod1000':
+        labelsNorm = int(1000)
+
 
     traindata = CONRADataset(DATA_FOLDER,
                              True,
                              device=device,
                              precompute=True,
-                             transform=None)
+                             transform=labelsNorm)
     testdata = CONRADataset(DATA_FOLDER,
                             False,
                             device=device,
                             precompute=True,
-                            transform=None)
+                            transform=labelsNorm)
 
     trainingset = DataLoader(traindata, **train_params)
     testset = DataLoader(testdata, **test_params)
@@ -112,8 +158,7 @@ def train(args):
 
     o = optim.SGD(m.parameters(),
                   lr=LR,
-                  momentum=MOM,
-                  weight_decay=0.0005)
+                  momentum=MOM)
 
     loss_fn = nn.MSELoss()
 
@@ -123,17 +168,27 @@ def train(args):
     # TODO recognice latest checkpoint and load it
     if len(os.listdir(WEIGHT_DIR)) != 0:
         checkpoints = os.listdir(WEIGHT_DIR)
+        checkDir = {}
+        latestCheckpoint = 0
+        toUse = 0
         for i, checkpoint in enumerate(checkpoints):
-            print("[{}] {}".format(i, checkpoint))
-        idx = input("select checkpoint to use: ")
-        checkpoint = torch.load(os.path.join(WEIGHT_DIR, checkpoints[int(idx)]))
+            stepOfCheckpoint = int(checkpoint.split(str(args.model) + str(args.name))[-1].split('.pt')[0])
+            checkDir[stepOfCheckpoint] = checkpoint
+            latestCheckpoint = max(latestCheckpoint, stepOfCheckpoint)
+            print("[{}] {}".format(stepOfCheckpoint, checkpoint))
+        # if on development machine, prompt for input, else just take the most recent one
+        if 'faui' in os.uname()[1]:
+            toUse = int(input("select checkpoint to use: "))
+        else:
+            toUse = latestCheckpoint
+        checkpoint = torch.load(os.path.join(WEIGHT_DIR, checkDir[toUse]))
         m.load_state_dict(checkpoint['model_state_dict'])
         m.to(device) # pushing weights to gpu
         o.load_state_dict(checkpoint['optimizer_state_dict'])
         train_loss = checkpoint['train_loss']
         test_loss = checkpoint['test_loss']
         START = checkpoint['epoch']
-        print("using checkpoint {}:\n\tloss(train/test): {}/{}".format(idx, train_loss, test_loss))
+        print("using checkpoint {}:\n\tloss(train/test): {}/{}".format(toUse, train_loss, test_loss))
     else:
         print("starting from scratch")
 
@@ -153,12 +208,14 @@ def train(args):
 
     # printing runtime information
     print("starting training at {} for {} epochs {} iterations each\n\t{} total".format(START, EPOCHS, ITER, EPOCHS * ITER))
+
     print("\tbatchsize: {}\n\tloss: {}\n\twill save results to \"{}\"".format(BATCHSIZE, train_loss, CHECKPOINT))
+    print("\tmodel: {}\n\tlearningrate: {}\n\tmomentum: {}\n\tnorming output space: {}".format(args.model, LR, MOM, args.norm))
 
     #start actual training loops
     for e in range(START, START + EPOCHS):
         # iterations will not be interupted with validation and metrics
-        for i in range(ITER):
+        for i in range(startITER, ITER):
             global_step = (e * ITER) + i
 
             # training
@@ -184,7 +241,6 @@ def train(args):
 
         print("advanced metrics")
         #TODO come up with some metrics to evaluate image quality
-        iod, wat = None, None
         with torch.no_grad():
             for x, y in testset:
                 # x, y in shape[2,2,480,620] [b,c,h,w]
@@ -192,27 +248,50 @@ def train(args):
                 pred = m(x)
                 iod = pred.cpu().numpy()[0, 0, :, :]
                 water = pred.cpu().numpy()[0, 1, :, :]
-                gtiod = y.cpu().numpy()[0, 1, :, :]
-                gtwater = y.cpu().numpy()[0, 0, :, :]
+                gtiod = y.cpu().numpy()[0, 0, :, :]
+                gtwater = y.cpu().numpy()[0, 1, :, :]
+                if(args.norm is "normalize"):
+                    iod = (iod * std[0]) + mean[0]
+                    water = (water * std[1]) + mean[1]
+                    gtiod = (gtiod * std[0]) + mean[0]
+                    gtwater = (gtwater * std[1]) + mean[1]
+                if(args.norm is "iod1000"):
+                    iod /= 1000
+                    gtiod /= 1000
                 IMAGE_LOG_DIR = os.path.join(CUSTOM_LOG_DIR, str(global_step))
                 if not os.path.isdir(IMAGE_LOG_DIR):
                     os.makedirs(IMAGE_LOG_DIR)
-                np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
-                np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)
-                np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.npy'), gtiod)
-                np.save(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.npy'), gtwater)
+
+                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.png'), iod, cmap='gray')
+                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.png'), water, cmap='gray')
+                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.png'), gtiod, cmap='gray')
+                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.png'), gtwater, cmap='gray')
+
+                print("creating and saving profile plot at 240")
+                fig2, (ax1, ax2) = plt.subplots(nrows=2,
+                                                ncols=1)  # plot water and iodine in one plot
+                ax1.plot(iod[240])
+                ax1.plot(gtiod[240])
+                ax1.title.set_text("iodine horizontal profile")
+                ax1.set_ylabel("mm iodine")
+                ax1.set_ylim([np.min(gtiod), np.max(gtiod)])
+                print("max value in gtiod is {}".format(np.max(gtiod)))
+                ax2.plot(water[240])
+                ax2.plot(gtwater[240])
+                ax2.title.set_text("water horizontal profile")
+                ax2.set_ylabel("mm water")
+                ax2.set_ylim([np.min(gtwater), np.max(gtwater)])
+
+                plt.subplots_adjust(wspace=0.3)
+                plt.savefig(os.path.join(IMAGE_LOG_DIR, 'ProfilePlots' + str(global_step) + '.png'))
+
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)f
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.npy'), gtiod)
+                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.npy'), gtwater)
                 break
         print("saved truth and prediction in shape " + str(iod.shape))
         print("logging")
-        CHECKPOINT = os.path.join(WEIGHT_DIR, str(args.model) + str(args.name) + str(global_step) + ".pt")
-        torch.save({
-            'epoch': e,
-            'model_state_dict': m.state_dict(),
-            'optimizer_state_dict': o.state_dict(),
-            'train_loss': train_loss,
-            'test_loss': test_loss},
-            CHECKPOINT)
-        print('\tsaved weigths to: ', CHECKPOINT)
         if logger is not None and train_loss is not None:
             logger.add_scalar('test_loss', test_loss, global_step=global_step)
             logger.add_scalar('train_loss', train_loss, global_step=global_step)
@@ -231,6 +310,7 @@ def train(args):
     print("saving upon exit")
     torch.save({
         'epoch': EPOCHS,
+        'iterations': ITER,
         'model_state_dict': m.state_dict(),
         'optimizer_state_dict': o.state_dict(),
         'train_loss': train_loss,
@@ -249,32 +329,34 @@ if __name__ == "__main__":
                         help='folder containing test and training sets of MNIST')
     parser.add_argument('--run', '-r', required=True,
                         help='target folder which will hold model weights and logs')
-    parser.add_argument('--model', '-m', default='unet',
-                        help='model to use. options are: [<unet>], <simpleconv>')
+    parser.add_argument('--model', '-m', required=True,
+                        help='model to use. options are: [<unet>], <conv>')
+    parser.add_argument('--epochs', type=int, required=True,
+                        help='number of epochs to train (default: 5)')
+    parser.add_argument('--iterations', type=int, required=True,
+                        help='training cycles per epoch (before validation) (default: 1)')
+    parser.add_argument('--lr_FROM', type=float, required=True,
+                        help='learning rate (default: 0.000001)')
+    parser.add_argument('--lr_TO', type=float, required=True,
+                        help='learning rate (default: 0.000001)')
+    parser.add_argument('--lr_STEPS', type=int, required=True,
+                        help='learning rate (default: 5)')
+
+    parser.add_argument('--workers', type=int, default=10, metavar='N',
+                        help='parallel data loading processes (default: 5)')
     parser.add_argument('--name', default='checkpoint',
                         help='naming of checkpoint saved')
+    parser.add_argument('--norm', required=False, default='normalize',
+                        help='choose to normalize or convert iodine images to um. <normalize>, <iod1000>, <subtractmean>')
     parser.add_argument('--batch-size', type=int, default=2, metavar='N',
                         help='input batch size for training (default: 2)')
     parser.add_argument('--test-batch-size', type=int, default=2, metavar='N',
                         help='input batch size for testing (default: 2)')
-    parser.add_argument('--workers', type=int, default=5, metavar='N',
-                        help='parallel data loading processes (default: 5)')
-    parser.add_argument('--epochs', type=int, default=1, metavar='N',
-                        help='number of epochs to train (default: 5)')
-    parser.add_argument('--iterations', type=int, default=1, metavar='N',
-                        help='training cycles per epoch (before validation) (default: 1)')
-    parser.add_argument('--lr', type=float, default=1e-6, metavar='LR',
-                        help='learning rate (default: 0.000001)')
     parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
                         help='SGD momentum (default: 0.5)')
     parser.add_argument('--tb', action='store_false', default=True,
                         help='enables/disables tensorboard logging')
-    # parser.add_argument('--seed', type=int, default=1998, metavar='S',
-    #                     help='random seed (default: 1)')
-    # parser.add_argument('--log-interval', type=int, default=1, metavar='N',
-    #                     help='how many batches to wait before logging training status')
-    parser.add_argument('--save-model', action='store_true', default=True,
-                        help='For Saving the current Model (default=True)')
+
     args = parser.parse_args()
     # handle tensorboard outside of train() to be able to stop the tensorboard process
     TB_DIR = os.path.join(args.run, "tblog")
@@ -285,11 +367,19 @@ if __name__ == "__main__":
     logger = None
     if args.tb:
         logger = SummaryWriter(log_dir=TB_DIR)
-        print("tensorboard logs at: " + TB_DIR)
     else:
         print('tensorboard logging turned off')
+
     try:
-        train(args)
+        lr_range = np.arange(float(args.lr_FROM), float(args.lr_TO), (float(args.lr_TO)-float(args.lr_FROM))/float(args.lr_STEPS))
+        root = args.run
+        for l in lr_range:
+            new_root = os.path.join(root, str(l))
+            if not os.path.isdir(new_root):
+                os.makedirs(new_root)
+            args.run = new_root
+            args.lr = l
+            #train(args)
         if logger is not None:
             logger.close()
     except (KeyboardInterrupt, SystemExit):

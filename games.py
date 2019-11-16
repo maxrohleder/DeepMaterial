@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import glob
+import torch
 
 def mkifnot(dir):
     if not os.path.isdir(dir):
@@ -55,9 +56,13 @@ def createOverview(additionalLOGS, targetfolder):
 
 
 if __name__ == "__main__":
-    f = "/Users/mr/bachelor/data/run/overf_MECT_iodOnly/additionalLOGS"
-    t = "/Users/mr/bachelor/data/run/overf_MECT_iodOnly/results"
-    if not os.path.isdir(t):
-        os.makedirs(t)
-
-    createOverview(f, t)
+    # f = "/Users/mr/bachelor/data/run/overf_MECT_iodOnly/additionalLOGS"
+    # t = "/Users/mr/bachelor/data/run/overf_MECT_iodOnly/results"
+    # if not os.path.isdir(t):
+    #     os.makedirs(t)
+    #
+    # createOverview(f, t)
+    a = np.zeros((2, 2, 5, 5))
+    t = torch.from_numpy(a)
+    t.data[:, 0, :, :] *= 1
+    t.data[]
