@@ -339,13 +339,13 @@ if __name__ == "__main__":
                         help='model to use. options are: [<unet>], <conv>')
     parser.add_argument('--name', default='checkpoint',
                         help='naming of checkpoint saved')
-    parser.add_argument('--norm', required=False, default='normalize',
+    parser.add_argument('--norm', required=True, default='normalize',
                         help='choose to normalize or convert iodine images to um. <normalize>, <iod1000>, <subtractmean>')
     parser.add_argument('--batch-size', type=int, default=2, metavar='N',
                         help='input batch size for training (default: 2)')
     parser.add_argument('--test-batch-size', type=int, default=2, metavar='N',
                         help='input batch size for testing (default: 2)')
-    parser.add_argument('--workers', type=int, default=5, metavar='N',
+    parser.add_argument('--workers', type=int, default=10, metavar='N',
                         help='parallel data loading processes (default: 5)')
     parser.add_argument('--epochs', type=int, default=1, metavar='N',
                         help='number of epochs to train (default: 5)')
