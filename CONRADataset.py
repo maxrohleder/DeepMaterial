@@ -79,10 +79,6 @@ class CONRADataset(Dataset):
                    torch.load(self.torchDump + "/mat_{}.pt".format(idx), map_location='cpu')
 
             if self.transform is not None:
-                if(type(self.transform) is int):
-                    # scaling the iodine channel by a factor of 1000
-                    Y.data[:, 0, :, :] *= 1000
-                    return X, Y
                 # to normalize the labels (cm) see topic numerical instability of iodine
                 return X, self.transform(Y)
             else:

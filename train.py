@@ -47,8 +47,8 @@ def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, tran
         trainingset = DataLoader(ds, **load_params)
 
         # sticking to convention iod -> 0, water -> 1
-        mean = np.zeros(2)
-        std = np.zeros(2)
+        m = np.zeros(2)
+        s = np.zeros(2)
 
         counter = 0
         # iterating and summing all mean and std
@@ -57,12 +57,12 @@ def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, tran
             y = y.to(device=device, dtype=torch.float)
             iod = y[:, 0, :, :]
             water = y[:, 1, :, :]
-            mean[0] += torch.mean(iod)
-            mean[1] += torch.mean(water)
-            std[0] += torch.std(iod)
-            std[1] += torch.std(water)
+            m[0] += torch.mean(iod)
+            m[1] += torch.mean(water)
+            s[0] += torch.std(iod)
+            s[1] += torch.std(water)
             counter += 1
-        return mean/counter, std/counter
+        return m/counter, s/counter
     print("[train.py/computeMeanStd: dataset not recognized")
     exit(1)
 
@@ -71,7 +71,6 @@ def train(args):
     '''
     -------------------------Hyperparameters--------------------------
     '''
-    global std, mean
     EPOCHS = args.epochs
     START = 0  # could enter a checkpoint start epoch
     ITER = args.iterations  # per epoch
@@ -122,20 +121,19 @@ def train(args):
     '''
     labelsNorm = None
     # normalizing on a trainingset wide mean and std
-    if args.norm == 'normalize':
+    mean = None
+    std = None
+    if args.norm:
         print('computing mean and std over trainingset')
         # computes mean and std over all ground truths in dataset to tackle the problem of numerical insignificance
         mean, std = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device)
-        print('iodine (mean/std): {}\t{}'.format(mean[0], std[0]))
-        print('water (mean/std): {}\t{}'.format(mean[1], std[1]))
+        print('\niodine (mean/std): {}\t{}'.format(mean[0], std[0]))
+        print('water (mean/std): {}\t{}\n'.format(mean[1], std[1]))
         labelsNorm = transforms.Normalize(mean=mean, std=std)
         m2, s2 = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device, transform=labelsNorm)
-        print("new mean and std are (m/s): {} / {}".format(m2, s2))
-
-    # scaling only the iodine domain to tackle the problem of low iodine numbers
-    if args.norm is 'iod1000':
-        labelsNorm = int(1000)
-
+        print("new mean and std are:")
+        print('\nnew iodine (mean/std): {}\t{}'.format(m2[0], s2[0]))
+        print('new water (mean/std): {}\t{}\n'.format(m2[1], s2[1]))
 
     traindata = CONRADataset(DATA_FOLDER,
                              True,
@@ -248,14 +246,12 @@ def train(args):
                 water = pred.cpu().numpy()[0, 1, :, :]
                 gtiod = y.cpu().numpy()[0, 0, :, :]
                 gtwater = y.cpu().numpy()[0, 1, :, :]
-                if(args.norm is "normalize"):
+                if args.norm:
+                    print('denormalizing images')
                     iod = (iod * std[0]) + mean[0]
                     water = (water * std[1]) + mean[1]
                     gtiod = (gtiod * std[0]) + mean[0]
                     gtwater = (gtwater * std[1]) + mean[1]
-                if(args.norm is "iod1000"):
-                    iod /= 1000
-                    gtiod /= 1000
                 IMAGE_LOG_DIR = os.path.join(CUSTOM_LOG_DIR, str(global_step))
                 if not os.path.isdir(IMAGE_LOG_DIR):
                     os.makedirs(IMAGE_LOG_DIR)
@@ -280,7 +276,7 @@ def train(args):
                 ax2.set_ylabel("mm water")
                 ax2.set_ylim([np.min(gtwater), np.max(gtwater)])
 
-                plt.subplots_adjust(wspace=0.7)
+                plt.subplots_adjust(hspace=0.3)
                 plt.savefig(os.path.join(IMAGE_LOG_DIR, 'ProfilePlots' + str(global_step) + '.png'))
 
                 # np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
@@ -339,7 +335,7 @@ if __name__ == "__main__":
                         help='model to use. options are: [<unet>], <conv>')
     parser.add_argument('--name', default='checkpoint',
                         help='naming of checkpoint saved')
-    parser.add_argument('--norm', required=True, default='normalize',
+    parser.add_argument('--norm', required=False, action='store_true', default=False,
                         help='choose to normalize or convert iodine images to um. <normalize>, <iod1000>, <subtractmean>')
     parser.add_argument('--batch-size', type=int, default=2, metavar='N',
                         help='input batch size for training (default: 2)')
