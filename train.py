@@ -37,6 +37,7 @@ def calculate_loss(set, loss_fn, length_set, dev, model):
     return l/length_set
 
 def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, transform=None):
+    # NORMLABEL
     if datasettype == 'CONRADataset':
         # computing mean and std over trainingset
         ds = CONRADataset(DATAFOLDER,
@@ -120,6 +121,7 @@ def train(args):
     ----------------loading model and checkpoints---------------------
     '''
     labelsNorm = None
+    # NORMLABEL
     # normalizing on a trainingset wide mean and std
     mean = None
     std = None
@@ -129,7 +131,7 @@ def train(args):
         mean, std = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device)
         print('\niodine (mean/std): {}\t{}'.format(mean[0], std[0]))
         print('water (mean/std): {}\t{}\n'.format(mean[1], std[1]))
-        labelsNorm = transforms.Normalize(mean=mean, std=std)
+        labelsNorm = transforms.Normalize(mean=[0, 0], std=std)
         m2, s2 = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device, transform=labelsNorm)
         print("new mean and std are:")
         print('\nnew iodine (mean/std): {}\t{}'.format(m2[0], s2[0]))
@@ -247,6 +249,7 @@ def train(args):
                 gtiod = y.cpu().numpy()[0, 0, :, :]
                 gtwater = y.cpu().numpy()[0, 1, :, :]
                 if args.norm:
+                    # NORMLABEL
                     print('denormalizing images')
                     iod = (iod * std[0]) + mean[0]
                     water = (water * std[1]) + mean[1]
@@ -331,6 +334,8 @@ if __name__ == "__main__":
                         help='folder containing test and training sets of MNIST')
     parser.add_argument('--run', '-r', required=True,
                         help='target folder which will hold model weights and logs')
+    parser.add_argument('--valsample', '-v', required=True,
+                        help='path to a single .pt file to validate every epoch')
     parser.add_argument('--model', '-m', default='unet',
                         help='model to use. options are: [<unet>], <conv>')
     parser.add_argument('--name', default='checkpoint',
