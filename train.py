@@ -67,6 +67,48 @@ def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, tran
     print("[train.py/computeMeanStd: dataset not recognized")
     exit(1)
 
+def advanvedMetrics(groundTruth, pred, mean, std, global_step, norm, IMAGE_LOG_DIR):
+    '''
+    logging advanced metrics in IMAGE_LOG_DIR
+    in case of stddev normalization mean will be [0, 0]
+    '''
+    iod = pred[0]
+    water = pred[1]
+    gtiod = groundTruth[0]
+    gtwater = groundTruth[1]
+    if norm:
+        # NORMLABEL
+        print('denormalizing images')
+        iod = (iod * std[0]) + mean[0]
+        water = (water * std[1]) + mean[1]
+        gtiod = (gtiod * std[0]) + mean[0]
+        gtwater = (gtwater * std[1]) + mean[1]
+
+    plt.imsave(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.png'), iod, cmap='gray')
+    plt.imsave(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.png'), water, cmap='gray')
+    plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.png'), gtiod, cmap='gray')
+    plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.png'), gtwater, cmap='gray')
+
+    print("creating and saving profile plot at 240")
+    fig2, (ax1, ax2) = plt.subplots(nrows=2,
+                                    ncols=1)  # plot water and iodine in one plot
+    ax1.plot(iod[240])
+    ax1.plot(gtiod[240])
+    ax1.title.set_text("iodine horizontal profile")
+    ax1.set_ylabel("mm iodine")
+    ax1.set_ylim([np.min(gtiod), np.max(gtiod)])
+    print("max value in gtiod is {}".format(np.max(gtiod)))
+    ax2.plot(water[240])
+    ax2.plot(gtwater[240])
+    ax2.title.set_text("water horizontal profile")
+    ax2.set_ylabel("mm water")
+    ax2.set_ylim([np.min(gtwater), np.max(gtwater)])
+
+    plt.subplots_adjust(hspace=0.3)
+    plt.savefig(os.path.join(IMAGE_LOG_DIR, 'ProfilePlots' + str(global_step) + '.png'))
+    print("saved truth and prediction in shape " + str(iod.shape))
+
+
 # main algorithm configured by argparser. see main method of this file.
 def train(args):
     '''
@@ -102,6 +144,21 @@ def train(args):
     device = torch.device("cuda:0" if use_cuda else "cpu")
     print("using device: ", str(device))
 
+    # loading the validation samples to make online evaluations
+    path_to_valX = args.valX
+    path_to_valY = args.valY
+    valX = None
+    valY = None
+    if os.path.exists(path_to_valX) and os.path.exists(path_to_valY) \
+            and os.path.isfile(path_to_valX) and os.path.isfile(path_to_valY):
+        with torch.no_grad():
+            valX, valY = torch.load(path_to_valX, map_location='cpu'), \
+                   torch.load(path_to_valY, map_location='cpu')
+
+
+    '''
+    ---------------------------loading dataset and normalizing---------------------------
+    '''
     # Dataloader Parameters
     train_params = {'batch_size': BATCHSIZE,
                     'shuffle': True,
@@ -116,10 +173,6 @@ def train(args):
     if not os.path.isdir(CUSTOM_LOG_DIR):
         os.makedirs(CUSTOM_LOG_DIR)
 
-
-    '''
-    ----------------loading model and checkpoints---------------------
-    '''
     labelsNorm = None
     # NORMLABEL
     # normalizing on a trainingset wide mean and std
@@ -150,6 +203,10 @@ def train(args):
 
     trainingset = DataLoader(traindata, **train_params)
     testset = DataLoader(testdata, **test_params)
+
+    '''
+    ----------------loading model and checkpoints---------------------
+    '''
 
     if args.model == "unet":
         m = UNet(2, 2).to(device)
@@ -238,56 +295,33 @@ def train(args):
         train_loss = calculate_loss(set=trainingset, loss_fn=loss_fn, length_set=len(traindata), dev=device, model=m)
 
         print("advanced metrics")
-        #TODO come up with some metrics to evaluate image quality
+        '''
+            if valX and valY were set in preparations, use them to perform analytics.
+            if not, use the first sample from the testset to perform analytics
+        '''
         with torch.no_grad():
-            for x, y in testset:
-                # x, y in shape[2,2,480,620] [b,c,h,w]
-                x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
-                pred = m(x)
-                iod = pred.cpu().numpy()[0, 0, :, :]
-                water = pred.cpu().numpy()[0, 1, :, :]
-                gtiod = y.cpu().numpy()[0, 0, :, :]
-                gtwater = y.cpu().numpy()[0, 1, :, :]
-                if args.norm:
-                    # NORMLABEL
-                    print('denormalizing images')
-                    iod = (iod * std[0]) + mean[0]
-                    water = (water * std[1]) + mean[1]
-                    gtiod = (gtiod * std[0]) + mean[0]
-                    gtwater = (gtwater * std[1]) + mean[1]
-                IMAGE_LOG_DIR = os.path.join(CUSTOM_LOG_DIR, str(global_step))
-                if not os.path.isdir(IMAGE_LOG_DIR):
-                    os.makedirs(IMAGE_LOG_DIR)
+            truth, pred = None, None
+            IMAGE_LOG_DIR = os.path.join(CUSTOM_LOG_DIR, str(global_step))
+            if not os.path.isdir(IMAGE_LOG_DIR):
+                os.makedirs(IMAGE_LOG_DIR)
 
-                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.png'), iod, cmap='gray')
-                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.png'), water, cmap='gray')
-                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.png'), gtiod, cmap='gray')
-                plt.imsave(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.png'), gtwater, cmap='gray')
+            if valX is not None and valY is not None:
+                batched = np.zeros((BATCHSIZE, *valX.numpy().shape))
+                batched[0] = valX.numpy()
+                batched = torch.from_numpy(batched).to(device=device, dtype=torch.float)
+                pred = m(batched)
+                pred = pred.cpu().numpy()[0]
+                truth = valY.numpy() # still on cpu
+                assert pred.shape == truth.shape
+            else:
+                for x, y in testset:
+                    # x, y in shape[2,2,480,620] [b,c,h,w]
+                    x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
+                    pred = m(x)
+                    pred = pred.numpy()[0] # taking only the first projection
+                    truth = y.cpu().numpy()[0] # first projection for evaluation
+            advanvedMetrics(truth, pred, mean, std, global_step, args.norm, IMAGE_LOG_DIR)
 
-                print("creating and saving profile plot at 240")
-                fig2, (ax1, ax2) = plt.subplots(nrows=2,
-                                                ncols=1)  # plot water and iodine in one plot
-                ax1.plot(iod[240])
-                ax1.plot(gtiod[240])
-                ax1.title.set_text("iodine horizontal profile")
-                ax1.set_ylabel("mm iodine")
-                ax1.set_ylim([np.min(gtiod), np.max(gtiod)])
-                print("max value in gtiod is {}".format(np.max(gtiod)))
-                ax2.plot(water[240])
-                ax2.plot(gtwater[240])
-                ax2.title.set_text("water horizontal profile")
-                ax2.set_ylabel("mm water")
-                ax2.set_ylim([np.min(gtwater), np.max(gtwater)])
-
-                plt.subplots_adjust(hspace=0.3)
-                plt.savefig(os.path.join(IMAGE_LOG_DIR, 'ProfilePlots' + str(global_step) + '.png'))
-
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)f
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.npy'), gtiod)
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.npy'), gtwater)
-                break
-        print("saved truth and prediction in shape " + str(iod.shape))
         print("logging")
         CHECKPOINT = os.path.join(WEIGHT_DIR, str(args.model) + str(args.name) + str(global_step) + ".pt")
         torch.save({
@@ -301,8 +335,8 @@ def train(args):
         if logger is not None and train_loss is not None:
             logger.add_scalar('test_loss', test_loss, global_step=global_step)
             logger.add_scalar('train_loss', train_loss, global_step=global_step)
-            logger.add_image("iodine-prediction", iod.reshape(1, 480, 620), global_step=global_step)
-            logger.add_image("ground-truth", gtiod.reshape(1, 480, 620), global_step=global_step)
+            logger.add_image("iodine-prediction", pred[0].reshape(1, 480, 620), global_step=global_step)
+            logger.add_image("water-prediction", pred[1].reshape(1, 480, 620), global_step=global_step)
             # logger.add_image("water-prediction", wat)
             print("\ttensorboard updated with test/train loss and a sample image")
         elif train_loss is not None:
@@ -334,8 +368,11 @@ if __name__ == "__main__":
                         help='folder containing test and training sets of MNIST')
     parser.add_argument('--run', '-r', required=True,
                         help='target folder which will hold model weights and logs')
-    parser.add_argument('--valsample', '-v', required=True,
+    parser.add_argument('--valX', required=True,
                         help='path to a single .pt file to validate every epoch')
+    parser.add_argument('--valY', required=True,
+                        help='path to a single .pt file to validate every epoch')
+
     parser.add_argument('--model', '-m', default='unet',
                         help='model to use. options are: [<unet>], <conv>')
     parser.add_argument('--name', default='checkpoint',
