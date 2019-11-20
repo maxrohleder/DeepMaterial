@@ -368,9 +368,9 @@ if __name__ == "__main__":
                         help='folder containing test and training sets of MNIST')
     parser.add_argument('--run', '-r', required=True,
                         help='target folder which will hold model weights and logs')
-    parser.add_argument('--valX', required=True,
+    parser.add_argument('--valX', required=False, default=None,
                         help='path to a single .pt file to validate every epoch')
-    parser.add_argument('--valY', required=True,
+    parser.add_argument('--valY', required=False, default=None,
                         help='path to a single .pt file to validate every epoch')
 
     parser.add_argument('--model', '-m', default='unet',
