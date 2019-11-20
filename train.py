@@ -149,7 +149,8 @@ def train(args):
     path_to_valY = args.valY
     valX = None
     valY = None
-    if os.path.exists(path_to_valX) and os.path.exists(path_to_valY) \
+    if path_to_valX is not None and path_to_valY is not None \
+            and os.path.exists(path_to_valX) and os.path.exists(path_to_valY) \
             and os.path.isfile(path_to_valX) and os.path.isfile(path_to_valY):
         with torch.no_grad():
             valX, valY = torch.load(path_to_valX, map_location='cpu'), \
