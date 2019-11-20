@@ -319,7 +319,7 @@ def train(args):
                     # x, y in shape[2,2,480,620] [b,c,h,w]
                     x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
                     pred = m(x)
-                    pred = pred.numpy()[0] # taking only the first projection
+                    pred = pred.cpu().numpy()[0] # taking only the first projection
                     truth = y.cpu().numpy()[0] # first projection for evaluation
             advanvedMetrics(truth, pred, mean, std, global_step, args.norm, IMAGE_LOG_DIR)
 
