@@ -124,6 +124,7 @@ def train(args):
     TEST_BATCHSIZE = args.test_batch_size
     NUMBER_OF_WORKERS = args.workers
     DATA_FOLDER = args.data
+    TESTSET_FOLDER = args.testset
     ROOT = args.run
     WEIGHT_DIR = os.path.join(ROOT, "weights")
     CUSTOM_LOG_DIR = os.path.join(ROOT, "additionalLOGS")
@@ -134,6 +135,11 @@ def train(args):
     if not os.path.isdir(DATA_FOLDER):
         print("data folder not existant or in wrong layout.\n\t", DATA_FOLDER)
         exit(0)
+    # check existance of testset
+    if TESTSET_FOLDER is not None and not os.path.isdir(TESTSET_FOLDER):
+        print("testset folder not existant or in wrong layout.\n\t", DATA_FOLDER)
+        exit(0)
+
 
     '''
     ---------------------------preparations---------------------------
@@ -196,11 +202,20 @@ def train(args):
                              device=device,
                              precompute=True,
                              transform=labelsNorm)
-    testdata = CONRADataset(DATA_FOLDER,
-                            False,
-                            device=device,
-                            precompute=True,
-                            transform=labelsNorm)
+
+    testdata = None
+    if TESTSET_FOLDER is not None:
+        testdata = CONRADataset(TESTSET_FOLDER,
+                                False,
+                                device=device,
+                                precompute=True,
+                                transform=labelsNorm)
+    else:
+        testdata = CONRADataset(DATA_FOLDER,
+                                False,
+                                device=device,
+                                precompute=True,
+                                transform=labelsNorm)
 
     trainingset = DataLoader(traindata, **train_params)
     testset = DataLoader(testdata, **test_params)
@@ -373,6 +388,8 @@ if __name__ == "__main__":
                         help='path to a single .pt file to validate every epoch')
     parser.add_argument('--valY', required=False, default=None,
                         help='path to a single .pt file to validate every epoch')
+    parser.add_argument('--testset', required=False, default=None,
+                        help="path to dataset to use to evaluate as testset")
 
     parser.add_argument('--model', '-m', default='unet',
                         help='model to use. options are: [<unet>], <conv>')
