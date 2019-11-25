@@ -5,12 +5,15 @@ import numpy as np
 from matplotlib import pyplot as plt
 import argparse
 from torch.utils.data import DataLoader
+from torchvision import transforms
 from tqdm import tqdm
 
 from CONRADataset import CONRADataset
 from material import multi_slice_viewer
 from models.convNet import simpleConvNet
 from models.unet import UNet
+
+from skimage.measure import compare_ssim as ssim
 
 
 def eval(poly, model, d):
@@ -95,8 +98,6 @@ if __name__ == "__main__":
                         help='directory to safe logs and reference images to')
     parser.add_argument('--model', '-m', default='unet',
                         help='model to use. options are: <unet>, [<simpleconv>]')
-    parser.add_argument('--ref', action='store_true', default=False,
-                        help='if this flag is set, the first sample will be forward passed and shown.')
 
     args = parser.parse_args()
     root_dir = args.data
@@ -142,101 +143,127 @@ if __name__ == "__main__":
     std = [71.52521623883929]
 
     labelsNorm = transforms.Normalize(mean=mean, std=std)
+    labelsNorm = None
 
+    # trainset part of this dataset
     evaldata1 = CONRADataset(root_dir,
                              True,
                              device=device,
                              precompute=True,
-                             transform=label)
+                             transform=labelsNorm)
+    # testset part of this dataset
     evaldata2 = CONRADataset(root_dir,
                              False,
                              device=device,
                              precompute=True,
-                             transform=None)
+                             transform=labelsNorm)
 
     evalset1 = DataLoader(evaldata1, **train_params)
     evalset2 = DataLoader(evaldata2, **train_params)
 
-    if args.ref:
-        print("showing reference image")
-        with torch.no_grad():
-            # c, p, y, x
-            iodine = np.zeros((200, 480, 620))
-            water = np.zeros((200, 480, 620))
-            le = np.zeros((200, 480, 620))
-            he = np.zeros((200, 480, 620))
-            gti = np.zeros((200, 480, 620))
-            gtw = np.zeros((200, 480, 620))
+    print("saving reference image")
+    with torch.no_grad():
+        # c, p, y, x
+        iodine = np.zeros((200, 480, 620))
+        water = np.zeros((200, 480, 620))
+        le = np.zeros((200, 480, 620))
+        he = np.zeros((200, 480, 620))
+        gti = np.zeros((200, 480, 620))
+        gtw = np.zeros((200, 480, 620))
 
-            counter = 0
-            for p, mat in tqdm(evalset1):
-                if counter > 199:
-                    break
-                p, mat = p.to(device=device, dtype=torch.float), mat.to(device=device, dtype=torch.float)
-                pred = m(p)
-                p = p.cpu().numpy()
-                mat = mat.cpu().numpy()
-                pred = pred.cpu().numpy()
-                iodine[counter] = pred[0, 0, :, :]
-                water[counter] = pred[0, 1, :, :]
-                le[counter] = p[0, 0, :, :]
-                he[counter] = p[0, 1, :, :]
-                gti[counter] = mat[0, 0, :, :]
-                gtw[counter] = mat[0, 1, :, :]
-                counter += 1
-            for p, mat in tqdm(evalset2):
-                if counter > 199:
-                    break
-                p, mat = p.to(device=device, dtype=torch.float), mat.to(device=device, dtype=torch.float)
-                pred = m(p)
-                p = p.cpu()
-                mat = mat.cpu()
-                pred = pred.cpu()
-                iodine[counter] = pred.data[0, 0, :, :]
-                water[counter] = pred.data[0, 1, :, :]
-                le[counter] = p.data[0, 0, :, :]
-                he[counter] = p.data[0, 1, :, :]
-                gti[counter] = mat.data[0, 0, :, :]
-                gtw[counter] = mat.data[0, 1, :, :]
-                counter += 1
-            size_str = '620x480x200'
-            fle_iodine = args.target + 'iodine_pred_' + size_str + '.raw'
-            fle_water = args.target + 'water_pred_' + size_str + '.raw'
-            fle_le = args.target + 'le_' + size_str + '.raw'
-            fle_he = args.target + 'he_' + size_str + '.raw'
-            fle_gtiod = args.target + 'iodine_truth_' + size_str + '.raw'
-            fle_gtwater = args.target + 'water_truth_' + size_str + '.raw'
-            print(fle_iodine)
-            with open(fle_iodine, 'w+'):
-                print('iodine prediction type: ' + str(iodine.dtype) + ' max/min: ' + str(np.max(iodine)) + '/' + str(np.min(iodine)))
-                iodine.astype('float32').tofile(fle_iodine)
-            # saving water image
-            with open(fle_water, 'w+'):
-                print('water prediction type: ' + str(water.dtype) + ' max/min: ' + str(np.max(water)) + '/' + str(np.min(water)))
-                iodine.astype('float32').tofile(fle_water)
-            # saving le image
-            with open(fle_le, 'w+'):
-                print('le image type: ' + str(le.dtype) + ' max/min: ' + str(np.max(le)) + '/' + str(np.min(le)))
-                iodine.astype('float32').tofile(fle_le)
-            # saving he image
-            with open(fle_he, 'w+'):
-                print('he image type: ' + str(he.dtype) + ' max/min: ' + str(np.max(he)) + '/' + str(np.min(he)))
-                iodine.astype('float32').tofile(fle_he)
-            # saving gt iodine image
-            with open(fle_gtiod, 'w+'):
-                print('truth iodine type: ' + str(gti.dtype) + ' max/min: ' + str(np.max(gti)) + '/' + str(np.min(gti)))
-                iodine.astype('float32').tofile(fle_gtiod)
-            #saving gt water image
-            with open(fle_gtwater, 'w+'):
-                print('truth water type: ' + str(gtw.dtype) + ' max/min: ' + str(np.max(gtw)) + '/' + str(np.min(gtw)))
-                iodine.astype('float32').tofile(fle_gtwater)
-            #f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
-            # np.save(fle_iodine, iodine, dtype=dt)
-            # np.save(fle_water, water, dtype=dt)
-            # np.save(fle_le, le, dtype=dt)
-            # np.save(fle_he, he, dtype=dt)
-            # np.save(fle_gtiod, gti, dtype=dt)
-            # np.save(fle_gtwater, gtw, dtype=dt)
+        counter = 0
+        for p, mat in tqdm(evalset1):
+            if counter > 199:
+                break
+            p, mat = p.to(device=device, dtype=torch.float), mat.to(device=device, dtype=torch.float)
+            pred = m(p)
+            p = p.cpu().numpy()
+            mat = mat.cpu().numpy()
+            pred = pred.cpu().numpy()
+            iodine[counter] = pred[0, 0, :, :]
+            water[counter] = pred[0, 1, :, :]
+            le[counter] = p[0, 0, :, :]
+            he[counter] = p[0, 1, :, :]
+            gti[counter] = mat[0, 0, :, :]
+            gtw[counter] = mat[0, 1, :, :]
+            counter += 1
+        for p, mat in tqdm(evalset2):
+            if counter > 199:
+                break
+            p, mat = p.to(device=device, dtype=torch.float), mat.to(device=device, dtype=torch.float)
+            pred = m(p)
+            p = p.cpu()
+            mat = mat.cpu()
+            pred = pred.cpu()
+            iodine[counter] = pred.data[0, 0, :, :]
+            water[counter] = pred.data[0, 1, :, :]
+            le[counter] = p.data[0, 0, :, :]
+            he[counter] = p.data[0, 1, :, :]
+            gti[counter] = mat.data[0, 0, :, :]
+            gtw[counter] = mat.data[0, 1, :, :]
+            counter += 1
+        size_str = '620x480x200'
+        fle_iodine = args.target + 'iodine_pred_' + size_str + '.raw'
+        fle_water = args.target + 'water_pred_' + size_str + '.raw'
+        fle_le = args.target + 'le_' + size_str + '.raw'
+        fle_he = args.target + 'he_' + size_str + '.raw'
+        fle_gtiod = args.target + 'iodine_truth_' + size_str + '.raw'
+        fle_gtwater = args.target + 'water_truth_' + size_str + '.raw'
+        print(fle_iodine)
+        with open(fle_iodine, 'w+'):
+            print('iodine prediction type: ' + str(iodine.dtype) + ' max/min: ' + str(np.max(iodine)) + '/' + str(np.min(iodine)))
+            iodine.astype('float32').tofile(fle_iodine)
+        # saving water image
+        with open(fle_water, 'w+'):
+            print('water prediction type: ' + str(water.dtype) + ' max/min: ' + str(np.max(water)) + '/' + str(np.min(water)))
+            iodine.astype('float32').tofile(fle_water)
+        # saving le image
+        with open(fle_le, 'w+'):
+            print('le image type: ' + str(le.dtype) + ' max/min: ' + str(np.max(le)) + '/' + str(np.min(le)))
+            iodine.astype('float32').tofile(fle_le)
+        # saving he image
+        with open(fle_he, 'w+'):
+            print('he image type: ' + str(he.dtype) + ' max/min: ' + str(np.max(he)) + '/' + str(np.min(he)))
+            iodine.astype('float32').tofile(fle_he)
+        # saving gt iodine image
+        with open(fle_gtiod, 'w+'):
+            print('truth iodine type: ' + str(gti.dtype) + ' max/min: ' + str(np.max(gti)) + '/' + str(np.min(gti)))
+            iodine.astype('float32').tofile(fle_gtiod)
+        #saving gt water image
+        with open(fle_gtwater, 'w+'):
+            print('truth water type: ' + str(gtw.dtype) + ' max/min: ' + str(np.max(gtw)) + '/' + str(np.min(gtw)))
+            iodine.astype('float32').tofile(fle_gtwater)
+        #f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
+        # np.save(fle_iodine, iodine, dtype=dt)
+        # np.save(fle_water, water, dtype=dt)
+        # np.save(fle_le, le, dtype=dt)
+        # np.save(fle_he, he, dtype=dt)
+        # np.save(fle_gtiod, gti, dtype=dt)
+        # np.save(fle_gtwater, gtw, dtype=dt)
+
+
+        ### computing ssim and r index over dataset
+        iodSSIM = 0
+        waterSSIM = 0
+        iodR = 0
+        waterR = 0
+        for p in range(200):
+            pred = iodine[p]
+            gt = gti[p]
+            ss = ssim(pred, gt)
+            r = np.corrcoef(pred, gt)[1, 0]
+            iodR += r/200
+            iodSSIM += ss/200
+        for p in range(200):
+            pred = water[p]
+            gt = gtw[p]
+            ss = ssim(pred, gt)
+            r = np.corrcoef(pred, gt)[1, 0]
+            waterR += r/200
+            waterSSIM += ss/200
+        print("SSIM (water/iod): {} / {}".format(waterSSIM, iodSSIM))
+        print("R (water/iod): {} / {}".format(waterR, iodR))
+
 
         exit(0)
 

@@ -1,3 +1,4 @@
+from skimage.measure import compare_ssim as ssim
 from CONRADataset import CONRADataset
 from models.convNet import simpleConvNet
 from models.unet import UNet
@@ -66,6 +67,33 @@ def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, tran
         return m/counter, s/counter
     print("[train.py/computeMeanStd: dataset not recognized")
     exit(1)
+
+def performance(truth, pred):
+    iodine = pred[0]
+    water = pred[1]
+    gti = truth[0]
+    gtw = truth[1]
+
+    iodSSIM = 0
+    waterSSIM = 0
+    iodR = 0
+    waterR = 0
+    for p in range(200):
+        pred = iodine[p]
+        gt = gti[p]
+        ss = ssim(pred, gt)
+        r = np.corrcoef(pred, gt)[1, 0]
+        iodR += r / 200
+        iodSSIM += ss / 200
+    for p in range(200):
+        pred = water[p]
+        gt = gtw[p]
+        ss = ssim(pred, gt)
+        r = np.corrcoef(pred, gt)[1, 0]
+        waterR += r / 200
+        waterSSIM += ss / 200
+    return [iodSSIM, waterSSIM], [iodR, waterR]
+
 
 def advanvedMetrics(groundTruth, pred, mean, std, global_step, norm, IMAGE_LOG_DIR):
     '''
@@ -276,6 +304,13 @@ def train(args):
         print("trainset...")
         train_loss = calculate_loss(set=trainingset, loss_fn=loss_fn, length_set=len(traindata), dev=device, model=m)
 
+    ## SSIM and R value
+    R = []
+    SSIM = []
+    performanceFLE = os.path.join(CUSTOM_LOG_DIR, "performance.csv")
+    with open(performanceFLE, 'w+') as f:
+        f.write("step, SSIM, R \n")
+
 
     # printing runtime information
     print("starting training at {} for {} epochs {} iterations each\n\t{} total".format(START, EPOCHS, ITER, EPOCHS * ITER))
@@ -328,6 +363,7 @@ def train(args):
                 pred = m(batched)
                 pred = pred.cpu().numpy()[0]
                 truth = valY.numpy() # still on cpu
+
                 assert pred.shape == truth.shape
             else:
                 for x, y in testset:
@@ -337,6 +373,11 @@ def train(args):
                     pred = pred.cpu().numpy()[0] # taking only the first projection
                     truth = y.cpu().numpy()[0] # first projection for evaluation
             advanvedMetrics(truth, pred, mean, std, global_step, args.norm, IMAGE_LOG_DIR)
+            currSSIM, currR = performance(truth, pred)
+            with open(performanceFLE, 'a') as f:
+                newCSVline = "{}, {}, {}, {}, {}\n".format(global_step, currSSIM[0], currSSIM[1], currR[0], currR[1])
+                f.write(newCSVline)
+
 
         print("logging")
         CHECKPOINT = os.path.join(WEIGHT_DIR, str(args.model) + str(args.name) + str(global_step) + ".pt")
