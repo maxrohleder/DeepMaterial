@@ -251,7 +251,7 @@ def evaluate_performance(args, gridargs, logger):
             print("\ttensorboard updated with test/train loss and a sample image")
 
     # saving final results
-    CHECKPOINT = os.path.join(args.run, "finalWeights.pt")
+    CHECKPOINT = os.path.join(ROOT, "finalWeights.pt")
     print("saving upon exit")
     torch.save({
         'epoch': EPOCHS,
