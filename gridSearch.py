@@ -10,6 +10,8 @@ import torch
 from torchvision import transforms
 
 import numpy as np
+from skimage.measure import compare_ssim as ssim
+from scipy.stats import pearsonr
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from tensorboard import program
@@ -35,61 +37,89 @@ def calculate_loss(set, loss_fn, length_set, dev, model):
             l += float(loss_fn(pred, y).item())
     return l/length_set
 
+
+def performance(set, dev, model, bs):
+    iodSSIM = 0
+    waterSSIM = 0
+    iodR = 0
+    waterR = 0
+
+    with torch.no_grad():
+        for x, y in set:
+            x, y = x.to(device=dev, dtype=torch.float), y.to(device=dev, dtype=torch.float)
+            # shape is (bs, 2, 480, 620)
+            pred = model(x)
+            # loop over samples in batch
+            for p in range(bs):
+                iodine = pred[p, 0, :, :].cpu().numpy()
+                water = pred[p, 1, :, :].cpu().numpy()
+                gti = y[p, 0, :, :].cpu().numpy()
+                gtw = y[p, 1, :, :].cpu().numpy()
+                assert len(gti.shape) == 2
+                # norming iodine data range as its below one and results in np.nan
+                maxIod = iodine.max()
+                if maxIod != 0:
+                    iodFlatNormed = (iodine.flatten()/maxIod)*100
+                    gtiodFlatNormed = (gti.flatten()/maxIod)*100
+                    iodR += pearsonr(iodFlatNormed, gtiodFlatNormed)[0] / 200
+
+                iodSSIM += ssim(iodine, gti) / 200
+                waterR += pearsonr(water.flatten(), gtw.flatten())[0] / 200
+                waterSSIM += ssim(water, gtw) / 200
+
+    return [iodSSIM, waterSSIM], [iodR, waterR]
+
+
+
 # main algorithm configured by argparser. see main method of this file.
-def train(args):
+def evaluate_performance(args, gridargs, logger):
     '''
     -------------------------Hyperparameters--------------------------
     '''
-    global std, mean
     EPOCHS = args.epochs
-    START = 0  # could enter a checkpoint start epoch
     ITER = args.iterations  # per epoch
-    startITER = 0
-    LR = args.lr
-    MOM = args.momentum
+    LR = gridargs['lr']
+    MOM = gridargs['mom']
     # LOGInterval = args.log_interval
     BATCHSIZE = args.batch_size
-    TEST_BATCHSIZE = args.test_batch_size
     NUMBER_OF_WORKERS = args.workers
     DATA_FOLDER = args.data
-    ROOT = args.run
-    WEIGHT_DIR = os.path.join(ROOT, "weights")
+    ROOT = gridargs['run']
+    CUSTOM_LOG_DIR = os.path.join(ROOT, "additionalLOGS")
 
     # check existance of data
     if not os.path.isdir(DATA_FOLDER):
         print("data folder not existant or in wrong layout.\n\t", DATA_FOLDER)
         exit(0)
-
     '''
     ---------------------------preparations---------------------------
     '''
-
     # CUDA for PyTorch
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda:0" if use_cuda else "cpu")
     print("using device: ", str(device))
 
+    '''
+    ---------------------------loading dataset and normalizing---------------------------
+    '''
     # Dataloader Parameters
     train_params = {'batch_size': BATCHSIZE,
                     'shuffle': True,
                     'num_workers': NUMBER_OF_WORKERS}
-    test_params = {'batch_size': TEST_BATCHSIZE,
+    test_params = {'batch_size': BATCHSIZE,
                    'shuffle': False,
                    'num_workers': NUMBER_OF_WORKERS}
 
     # create a folder for the weights and custom logs
-    if not os.path.isdir(ROOT):
-        os.makedirs(ROOT)
-
-    '''
-    ----------------loading model and checkpoints---------------------
-    '''
+    if not os.path.isdir(CUSTOM_LOG_DIR):
+        os.makedirs(CUSTOM_LOG_DIR)
 
     traindata = CONRADataset(DATA_FOLDER,
                              True,
                              device=device,
                              precompute=True,
                              transform=None)
+
     testdata = CONRADataset(DATA_FOLDER,
                             False,
                             device=device,
@@ -113,33 +143,6 @@ def train(args):
     test_loss = None
     train_loss = None
 
-    # TODO recognice latest checkpoint and load it
-    if len(os.listdir(WEIGHT_DIR)) != 0:
-        checkpoints = os.listdir(WEIGHT_DIR)
-        checkDir = {}
-        latestCheckpoint = 0
-        toUse = 0
-        for i, checkpoint in enumerate(checkpoints):
-            stepOfCheckpoint = int(checkpoint.split(str(args.model) + str(args.name))[-1].split('.pt')[0])
-            checkDir[stepOfCheckpoint] = checkpoint
-            latestCheckpoint = max(latestCheckpoint, stepOfCheckpoint)
-            print("[{}] {}".format(stepOfCheckpoint, checkpoint))
-        # if on development machine, prompt for input, else just take the most recent one
-        if 'faui' in os.uname()[1]:
-            toUse = int(input("select checkpoint to use: "))
-        else:
-            toUse = latestCheckpoint
-        checkpoint = torch.load(os.path.join(WEIGHT_DIR, checkDir[toUse]))
-        m.load_state_dict(checkpoint['model_state_dict'])
-        m.to(device) # pushing weights to gpu
-        o.load_state_dict(checkpoint['optimizer_state_dict'])
-        train_loss = checkpoint['train_loss']
-        test_loss = checkpoint['test_loss']
-        START = checkpoint['epoch']
-        print("using checkpoint {}:\n\tloss(train/test): {}/{}".format(toUse, train_loss, test_loss))
-    else:
-        print("starting from scratch")
-
     '''
     -----------------------------training-----------------------------
     '''
@@ -155,29 +158,29 @@ def train(args):
 
 
     # printing runtime information
-    print("starting training at {} for {} epochs {} iterations each\n\t{} total".format(START, EPOCHS, ITER, EPOCHS * ITER))
+    print("starting training at {} for {} epochs {} iterations each\n\t{} total".format(0, EPOCHS, ITER, EPOCHS * ITER))
 
-    print("\tbatchsize: {}\n\tloss: {}\n\twill save results to \"{}\"".format(BATCHSIZE, train_loss, CHECKPOINT))
-    print("\tmodel: {}\n\tlearningrate: {}\n\tmomentum: {}\n\tnorming output space: {}".format(args.model, LR, MOM, args.norm))
+    print("\tbatchsize: {}\n\tloss: {}\n".format(BATCHSIZE, train_loss))
+    print("\tmodel: {}\n\tlearningrate: {}\n\tmomentum: {}\n\tnorming output space: {}".format(args.model, LR, MOM, False))
 
     #start actual training loops
-    for e in range(START, START + EPOCHS):
+    for e in range(0, EPOCHS):
         # iterations will not be interupted with validation and metrics
-        for i in range(startITER, ITER):
-            global_step = (e * ITER) + i
-
-            # training
-            m.train()
-            iteration_loss = 0
-            for x, y in tqdm(trainingset):
-                x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
-                pred = m(x)
-                loss = loss_fn(pred, y)
-                iteration_loss += loss.item()
-                o.zero_grad()
-                loss.backward()
-                o.step()
-            print("\niteration {}: --accumulated loss {}".format(global_step, iteration_loss))
+        # for i in range(ITER):
+        #     global_step = (e * ITER) + i
+        #
+        #     # training
+        #     m.train()
+        #     iteration_loss = 0
+        #     for x, y in tqdm(trainingset):
+        #         x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
+        #         pred = m(x)
+        #         loss = loss_fn(pred, y)
+        #         iteration_loss += loss.item()
+        #         o.zero_grad()
+        #         loss.backward()
+        #         o.step()
+        #     print("\niteration {}: --accumulated loss {}".format(global_step, iteration_loss))
 
         # validation, saving and logging
         print("\nvalidating")
@@ -187,8 +190,20 @@ def train(args):
         print("trainset...")
         train_loss = calculate_loss(set=trainingset, loss_fn=loss_fn, length_set=len(traindata), dev=device, model=m)
 
+        print("calculating performace...")
+        currSSIM, currR = performance(set=testset, dev=device, model=m, bs=BATCHSIZE)
+        print("SSIM (iod/water): {}/{}\nR (iod/water): {}/{}".format(currSSIM[0], currSSIM[1], currR[0], currR[1]))
+        #f.write("num, lr, mom, step, ssimIOD, ssimWAT, rIOD, rWAT, trainLOSS, testLOSS\n")
+        with open(gridargs['stats'], 'a') as f:
+            newCSVline = "{}, {}, {}, {}, {}, {}, {}, {}, {}, {}\n".format(gridargs['runnum'], LR,
+                                                                           MOM, global_step,
+                                                                           currSSIM[0], currSSIM[1],
+                                                                           currR[0],    currR[1],
+                                                                           train_loss,  test_loss)
+            f.write(newCSVline)
+            print("wrote new line to csv:\n\t{}".format(newCSVline))
+
         print("advanced metrics")
-        #TODO come up with some metrics to evaluate image quality
         with torch.no_grad():
             for x, y in testset:
                 # x, y in shape[2,2,480,620] [b,c,h,w]
@@ -198,14 +213,7 @@ def train(args):
                 water = pred.cpu().numpy()[0, 1, :, :]
                 gtiod = y.cpu().numpy()[0, 0, :, :]
                 gtwater = y.cpu().numpy()[0, 1, :, :]
-                if(args.norm is "normalize"):
-                    iod = (iod * std[0]) + mean[0]
-                    water = (water * std[1]) + mean[1]
-                    gtiod = (gtiod * std[0]) + mean[0]
-                    gtwater = (gtwater * std[1]) + mean[1]
-                if(args.norm is "iod1000"):
-                    iod /= 1000
-                    gtiod /= 1000
+
                 IMAGE_LOG_DIR = os.path.join(CUSTOM_LOG_DIR, str(global_step))
                 if not os.path.isdir(IMAGE_LOG_DIR):
                     os.makedirs(IMAGE_LOG_DIR)
@@ -232,14 +240,8 @@ def train(args):
 
                 plt.subplots_adjust(wspace=0.3)
                 plt.savefig(os.path.join(IMAGE_LOG_DIR, 'ProfilePlots' + str(global_step) + '.png'))
-
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'iod' + str(global_step) + '.npy'), iod)
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'water' + str(global_step) + '.npy'), water)f
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtiod' + str(global_step) + '.npy'), gtiod)
-                # np.save(os.path.join(IMAGE_LOG_DIR, 'gtwater' + str(global_step) + '.npy'), gtwater)
                 break
-        print("saved truth and prediction in shape " + str(iod.shape))
-        print("logging")
+
         if logger is not None and train_loss is not None:
             logger.add_scalar('test_loss', test_loss, global_step=global_step)
             logger.add_scalar('train_loss', train_loss, global_step=global_step)
@@ -247,14 +249,9 @@ def train(args):
             logger.add_image("ground-truth", gtiod.reshape(1, 480, 620), global_step=global_step)
             # logger.add_image("water-prediction", wat)
             print("\ttensorboard updated with test/train loss and a sample image")
-        elif train_loss is not None:
-            print("\tloss of global-step {}: {}".format(global_step, train_loss))
-        elif not useTensorboard:
-            print("\t(tb-logging disabled) test/train loss: {}/{} ".format(test_loss, train_loss))
-        else:
-            print("\tno loss accumulated yet")
 
     # saving final results
+    CHECKPOINT = os.path.join(args.run, "finalWeights.pt")
     print("saving upon exit")
     torch.save({
         'epoch': EPOCHS,
@@ -277,59 +274,78 @@ if __name__ == "__main__":
                         help='folder containing test and training sets of MNIST')
     parser.add_argument('--run', '-r', required=True,
                         help='target folder which will hold model weights and logs')
-    parser.add_argument('--model', '-m', required=True,
-                        help='model to use. options are: [<unet>], <conv>')
-    parser.add_argument('--epochs', type=int, required=True,
-                        help='number of epochs to train (default: 5)')
-    parser.add_argument('--iterations', type=int, required=True,
-                        help='training cycles per epoch (before validation) (default: 1)')
-    parser.add_argument('--lr_FROM', type=float, required=True,
-                        help='learning rate (default: 0.000001)')
-    parser.add_argument('--lr_TO', type=float, required=True,
-                        help='learning rate (default: 0.000001)')
-    parser.add_argument('--lr_STEPS', type=int, required=True,
-                        help='learning rate (default: 5)')
 
-    parser.add_argument('--workers', type=int, default=10, metavar='N',
-                        help='parallel data loading processes (default: 5)')
-    parser.add_argument('--name', default='checkpoint',
-                        help='naming of checkpoint saved')
-    parser.add_argument('--norm', required=False, default='normalize',
-                        help='choose to normalize or convert iodine images to um. <normalize>, <iod1000>, <subtractmean>')
+    parser.add_argument('--model', '-m', default='unet',
+                        help='model to use. options are: [<unet>], <conv>')
     parser.add_argument('--batch-size', type=int, default=2, metavar='N',
                         help='input batch size for training (default: 2)')
-    parser.add_argument('--test-batch-size', type=int, default=2, metavar='N',
-                        help='input batch size for testing (default: 2)')
-    parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
+    parser.add_argument('--workers', type=int, default=10, metavar='N',
+                        help='parallel data loading processes (default: 5)')
+    parser.add_argument('--epochs', type=int, default=1, metavar='N',
+                        help='number of epochs to train (default: 5)')
+    parser.add_argument('--iterations', type=int, default=1, metavar='N',
+                        help='training cycles per epoch (before validation) (default: 1)')
+
+    parser.add_argument('--lrfrom', type=float, default=1e-3, metavar='LR',
+                        help='learning rate (default: 0.000001)')
+    parser.add_argument('--lrto', type=float, default=1e-6, metavar='LR',
+                        help='learning rate (default: 0.000001)')
+
+    parser.add_argument('--momfrom', type=float, default=0.5, metavar='M',
                         help='SGD momentum (default: 0.5)')
-    parser.add_argument('--tb', action='store_false', default=True,
-                        help='enables/disables tensorboard logging')
+    parser.add_argument('--momto', type=float, default=1.1, metavar='M',
+                        help='SGD momentum (default: 0.5)')
 
+    parser.add_argument('--steps', type=int, default=5,
+                        help='steps in lr and mom direction')
+
+    # general runtime args
     args = parser.parse_args()
-    # handle tensorboard outside of train() to be able to stop the tensorboard process
-    TB_DIR = os.path.join(args.run, "tblog")
-    if not os.path.isdir(TB_DIR) and args.tb:
-        os.makedirs(TB_DIR)
+    # additional args needed for gridsearch
+    gridargs = {}
 
-    # create tensorboard logger and start tensorboard
+    # logfile to later contain all runtime infos of all runs
+    stats = os.path.join(args.run, "stats.csv")
+    gridargs['stats'] = stats
+    # folder to save all individial logs of all runs t0
+    runs = os.path.join(args.run, "runs")
+
+
+    if not os.path.isdir(args.run):
+        os.makedirs(args.run)
+    if not os.path.isdir(runs):
+        os.makedirs(runs)
+
+    with open(stats, 'w+') as f:
+        f.write("num, lr, mom, step, ssimIOD, ssimWAT, rIOD, rWAT, trainLOSS, testLOSS\n")
+
+    # space to perform gridsearch over
+    lrrange = np.linspace(args.lrfrom, args.lrto, args.steps)
+    momrange = np.linspace(args.momfrom, args.momto, args.steps)
+    print("learningrate range: {}\nmomentum range: {}".format(lrrange, momrange))
+
+    print("---------------------- starting hyperparamer optimization ----------------------")
+
     logger = None
-    if args.tb:
-        logger = SummaryWriter(log_dir=TB_DIR)
-    else:
-        print('tensorboard logging turned off')
-
     try:
-        lr_range = np.arange(float(args.lr_FROM), float(args.lr_TO), (float(args.lr_TO)-float(args.lr_FROM))/float(args.lr_STEPS))
-        root = args.run
-        for l in lr_range:
-            new_root = os.path.join(root, str(l))
-            if not os.path.isdir(new_root):
-                os.makedirs(new_root)
-            args.run = new_root
-            args.lr = l
-            #train(args)
-        if logger is not None:
-            logger.close()
+        for i, lr in enumerate(lrrange):
+            for j, mom in enumerate(momrange):
+                rundir = os.path.join(runs, "lr{}mom{}".format(i, j))
+                if not os.path.isdir(rundir):
+                    os.makedirs(rundir)
+                    ## start training with right args object
+                    gridargs['runnum'] = (i  * args.steps) + j
+                    gridargs['run'] = rundir
+                    gridargs['lr'] = lr
+                    gridargs['mom'] = mom
+                    print("starting run number: {}\n\tlr: {}\n\tmom: {}".format(gridargs['runnum'], gridargs['lr'], gridargs['mom']))
+                    logger = SummaryWriter(log_dir=rundir)
+                    print("tensorboard logs are written to ", rundir)
+
+                    evaluate_performance(args, gridargs, logger)
+
+                    ## end training
+                    logger.close()
     except (KeyboardInterrupt, SystemExit):
         print("exiting safely because of Keyboard Interrupt or SystemExit")
         if logger is not None:
