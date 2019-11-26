@@ -349,7 +349,7 @@ def train(args):
         train_loss = calculate_loss(set=trainingset, loss_fn=loss_fn, length_set=len(traindata), dev=device, model=m)
 
         print("calculating SSIM and R coefficients")
-        currSSIM, currR = performance(set=testset, dev=device, model=m, bs=BATCHSIZE)
+        currSSIM, currR = performance(set=testset, dev=device, model=m, bs=TEST_BATCHSIZE)
         print("SSIM (iod/water): {}/{}\nR (iod/water): {}/{}".format(currSSIM[0], currSSIM[1], currR[0], currR[1]))
         with open(performanceFLE, 'a') as f:
             newCSVline = "{}, {}, {}, {}, {}, {}, {}\n".format(global_step, currSSIM[0], currSSIM[1], currR[0],

@@ -35,36 +35,6 @@ def calculate_loss(set, loss_fn, length_set, dev, model):
             l += float(loss_fn(pred, y).item())
     return l/length_set
 
-def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, transform=None):
-    if datasettype == 'CONRADataset':
-        # computing mean and std over trainingset
-        ds = CONRADataset(DATAFOLDER,
-                         True,
-                         device=device,
-                         precompute=True,
-                         transform=transform)
-        trainingset = DataLoader(ds, **load_params)
-
-        # sticking to convention iod -> 0, water -> 1
-        mean = np.zeros(2)
-        std = np.zeros(2)
-
-        counter = 0
-        # iterating and summing all mean and std
-        for _, y in tqdm(trainingset):
-            # y in shape [b, c, y, x]
-            y = y.to(device=device, dtype=torch.float)
-            iod = y[:, 0, :, :]
-            water = y[:, 1, :, :]
-            mean[0] += torch.mean(iod)
-            mean[1] += torch.mean(water)
-            std[0] += torch.std(iod)
-            std[1] += torch.std(water)
-            counter += 1
-        return mean/counter, std/counter
-    print("[train.py/computeMeanStd: dataset not recognized")
-    exit(1)
-
 # main algorithm configured by argparser. see main method of this file.
 def train(args):
     '''
@@ -84,9 +54,6 @@ def train(args):
     DATA_FOLDER = args.data
     ROOT = args.run
     WEIGHT_DIR = os.path.join(ROOT, "weights")
-    CUSTOM_LOG_DIR = os.path.join(ROOT, "additionalLOGS")
-    CHECKPOINT = os.path.join(WEIGHT_DIR, str(args.model) + str(args.name) + ".pt")
-    useTensorboard = args.tb
 
     # check existance of data
     if not os.path.isdir(DATA_FOLDER):
@@ -111,42 +78,23 @@ def train(args):
                    'num_workers': NUMBER_OF_WORKERS}
 
     # create a folder for the weights and custom logs
-    if not os.path.isdir(WEIGHT_DIR):
-        os.makedirs(WEIGHT_DIR)
-    if not os.path.isdir(CUSTOM_LOG_DIR):
-        os.makedirs(CUSTOM_LOG_DIR)
-
+    if not os.path.isdir(ROOT):
+        os.makedirs(ROOT)
 
     '''
     ----------------loading model and checkpoints---------------------
     '''
-    labelsNorm = None
-    # normalizing on a trainingset wide mean and std
-    if args.norm == 'normalize':
-        print('computing mean and std over trainingset')
-        # computes mean and std over all ground truths in dataset to tackle the problem of numerical insignificance
-        mean, std = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device)
-        print('iodine (mean/std): {}\t{}'.format(mean[0], std[0]))
-        print('water (mean/std): {}\t{}'.format(mean[1], std[1]))
-        labelsNorm = transforms.Normalize(mean=mean, std=std)
-        m2, s2 = computeMeanStdOverDataset('CONRADataset', DATA_FOLDER, train_params, device, transform=labelsNorm)
-        print("new mean and std are (m/s): {} / {}".format(m2, s2))
-
-    # scaling only the iodine domain to tackle the problem of low iodine numbers
-    if args.norm is 'iod1000':
-        labelsNorm = int(1000)
-
 
     traindata = CONRADataset(DATA_FOLDER,
                              True,
                              device=device,
                              precompute=True,
-                             transform=labelsNorm)
+                             transform=None)
     testdata = CONRADataset(DATA_FOLDER,
                             False,
                             device=device,
                             precompute=True,
-                            transform=labelsNorm)
+                            transform=None)
 
     trainingset = DataLoader(traindata, **train_params)
     testset = DataLoader(testdata, **test_params)
