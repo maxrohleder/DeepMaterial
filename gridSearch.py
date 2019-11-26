@@ -166,21 +166,21 @@ def evaluate_performance(args, gridargs, logger):
     #start actual training loops
     for e in range(0, EPOCHS):
         # iterations will not be interupted with validation and metrics
-        # for i in range(ITER):
-        #     global_step = (e * ITER) + i
-        #
-        #     # training
-        #     m.train()
-        #     iteration_loss = 0
-        #     for x, y in tqdm(trainingset):
-        #         x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
-        #         pred = m(x)
-        #         loss = loss_fn(pred, y)
-        #         iteration_loss += loss.item()
-        #         o.zero_grad()
-        #         loss.backward()
-        #         o.step()
-        #     print("\niteration {}: --accumulated loss {}".format(global_step, iteration_loss))
+        for i in range(ITER):
+            global_step = (e * ITER) + i
+
+            # training
+            m.train()
+            iteration_loss = 0
+            for x, y in tqdm(trainingset):
+                x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
+                pred = m(x)
+                loss = loss_fn(pred, y)
+                iteration_loss += loss.item()
+                o.zero_grad()
+                loss.backward()
+                o.step()
+            print("\niteration {}: --accumulated loss {}".format(global_step, iteration_loss))
 
         # validation, saving and logging
         print("\nvalidating")
