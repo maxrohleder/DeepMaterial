@@ -50,7 +50,7 @@ def performance(set, dev, model, bs):
             # shape is (bs, 2, 480, 620)
             pred = model(x)
             # loop over samples in batch
-            for p in range(bs):
+            for p in range(pred.shape[0]):
                 iodine = pred[p, 0, :, :].cpu().numpy()
                 water = pred[p, 1, :, :].cpu().numpy()
                 gti = y[p, 0, :, :].cpu().numpy()
@@ -298,6 +298,12 @@ if __name__ == "__main__":
 
     parser.add_argument('--steps', type=int, default=5,
                         help='steps in lr and mom direction')
+
+    # reproducabilty
+    torch.manual_seed(1220)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    np.random.seed(0)
 
     # general runtime args
     args = parser.parse_args()
