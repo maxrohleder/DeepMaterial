@@ -88,10 +88,13 @@ def performance(set, dev, model, bs):
                 gti = y[p, 0, :, :].cpu().numpy()
                 gtw = y[p, 1, :, :].cpu().numpy()
                 assert len(gti.shape) == 2
-
-                iodR += pearsonr(iodine.flatten(), gti.flatten())[0] / 200
+                # norming iodine data range as its below one and results in np.nan
+                maxIod = iodine.max()
+                iodFlatNormed = (iodine.flatten()/maxIod)*100
+                gtiodFlatNormed = (gti.flatten()/maxIod)*100
+                iodR += pearsonr(iodFlatNormed, gtiodFlatNormed)[0] / 200
                 iodSSIM += ssim(iodine, gti) / 200
-                waterR += pearsonr(water.flatten(), gtw.flatten())[0] / 200
+                waterR += pearsonr(iodFlatNormed, gtiodFlatNormed)[0] / 200
                 waterSSIM += ssim(water, gtw) / 200
 
     return [iodSSIM, waterSSIM], [iodR, waterR]
