@@ -1,4 +1,6 @@
 from skimage.measure import compare_ssim as ssim
+from scipy.stats import pearsonr
+
 from CONRADataset import CONRADataset
 from models.convNet import simpleConvNet
 from models.unet import UNet
@@ -68,30 +70,30 @@ def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, tran
     print("[train.py/computeMeanStd: dataset not recognized")
     exit(1)
 
-def performance(truth, pred):
-    iodine = pred[0]
-    water = pred[1]
-    gti = truth[0]
-    gtw = truth[1]
-
+def performance(set, dev, model, bs):
     iodSSIM = 0
     waterSSIM = 0
     iodR = 0
     waterR = 0
-    for p in range(200):
-        pred = iodine[p]
-        gt = gti[p]
-        ss = ssim(pred, gt)
-        r = np.corrcoef(pred, gt)[1, 0]
-        iodR += r / 200
-        iodSSIM += ss / 200
-    for p in range(200):
-        pred = water[p]
-        gt = gtw[p]
-        ss = ssim(pred, gt)
-        r = np.corrcoef(pred, gt)[1, 0]
-        waterR += r / 200
-        waterSSIM += ss / 200
+
+    with torch.no_grad():
+        for x, y in set:
+            x, y = x.to(device=dev, dtype=torch.float), y.to(device=dev, dtype=torch.float)
+            # shape is (bs, 2, 480, 620)
+            pred = model(x)
+            # loop over samples in batch
+            for p in range(bs):
+                iodine = pred[p, 0, :, :].cpu().numpy()
+                water = pred[p, 1, :, :].cpu().numpy()
+                gti = y[p, 0, :, :].cpu().numpy()
+                gtw = y[p, 1, :, :].cpu().numpy()
+                assert len(gti.shape) == 2
+
+                iodR += pearsonr(iodine.flatten(), gti.flatten())[0] / 200
+                iodSSIM += ssim(iodine, gti) / 200
+                waterR += pearsonr(water.flatten(), gtw.flatten())[0] / 200
+                waterSSIM += ssim(water, gtw) / 200
+
     return [iodSSIM, waterSSIM], [iodR, waterR]
 
 
@@ -309,7 +311,8 @@ def train(args):
     SSIM = []
     performanceFLE = os.path.join(CUSTOM_LOG_DIR, "performance.csv")
     with open(performanceFLE, 'w+') as f:
-        f.write("step, SSIM, R \n")
+        f.write("step, SSIMiodine, SSIMwater, Riodine, Rwater, train_loss, test_loss\n")
+    print("computing ssim and r coefficents to: {}".format(performanceFLE))
 
 
     # printing runtime information
@@ -345,7 +348,15 @@ def train(args):
         print("trainset...")
         train_loss = calculate_loss(set=trainingset, loss_fn=loss_fn, length_set=len(traindata), dev=device, model=m)
 
-        print("advanced metrics")
+        print("calculating SSIM and R coefficients")
+        currSSIM, currR = performance(set=testset, dev=device, model=m, bs=BATCHSIZE)
+        print("SSIM (iod/water): {}/{}\nR (iod/water): {}/{}".format(currSSIM[0], currSSIM[1], currR[0], currR[1]))
+        with open(performanceFLE, 'a') as f:
+            newCSVline = "{}, {}, {}, {}, {}, {}, {}\n".format(global_step, currSSIM[0], currSSIM[1], currR[0],
+                                                               currR[1], train_loss, test_loss)
+            f.write(newCSVline)
+            print("wrote new line to csv:\n\t{}".format(newCSVline))
+
         '''
             if valX and valY were set in preparations, use them to perform analytics.
             if not, use the first sample from the testset to perform analytics
@@ -370,14 +381,9 @@ def train(args):
                     # x, y in shape[2,2,480,620] [b,c,h,w]
                     x, y = x.to(device=device, dtype=torch.float), y.to(device=device, dtype=torch.float)
                     pred = m(x)
-                    pred = pred.cpu().numpy()[0] # taking only the first projection
+                    pred = pred.cpu().numpy()[0] # taking only the first sample of batch
                     truth = y.cpu().numpy()[0] # first projection for evaluation
             advanvedMetrics(truth, pred, mean, std, global_step, args.norm, IMAGE_LOG_DIR)
-            currSSIM, currR = performance(truth, pred)
-            with open(performanceFLE, 'a') as f:
-                newCSVline = "{}, {}, {}, {}, {}\n".format(global_step, currSSIM[0], currSSIM[1], currR[0], currR[1])
-                f.write(newCSVline)
-
 
         print("logging")
         CHECKPOINT = os.path.join(WEIGHT_DIR, str(args.model) + str(args.name) + str(global_step) + ".pt")
