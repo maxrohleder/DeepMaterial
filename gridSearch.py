@@ -58,6 +58,11 @@ def performance(set, dev, model, bs):
                 assert len(gti.shape) == 2
                 # norming iodine data range as its below one and results in np.nan
                 maxIod = iodine.max()
+                if not np.all(np.isfinite(water.flatten())) or not np.all(np.isfinite(iodine.flatten())) \
+                        or np.all(iodine == iodine[0]) or np.all(water == water[0]):
+                    print("---------- nan, inf or constant array occurred -----------")
+                    continue
+
                 if maxIod != 0:
                     iodFlatNormed = (iodine.flatten()/maxIod)*100
                     gtiodFlatNormed = (gti.flatten()/maxIod)*100
@@ -181,6 +186,9 @@ def evaluate_performance(args, gridargs, logger):
                 loss.backward()
                 o.step()
             print("\niteration {}: --accumulated loss {}".format(global_step, iteration_loss))
+            if not np.isfinite(iteration_loss):
+                print("EXPLODING OR VANISHING GRADIENT at lr: {} mom: {} step: {}".format(LR, MOM, global_step))
+                return
 
         # validation, saving and logging
         print("\nvalidating")
@@ -322,8 +330,9 @@ if __name__ == "__main__":
     if not os.path.isdir(runs):
         os.makedirs(runs)
 
-    with open(stats, 'w+') as f:
-        f.write("num, lr, mom, step, ssimIOD, ssimWAT, rIOD, rWAT, trainLOSS, testLOSS\n")
+    if not os.path.isfile(stats):
+        with open(stats, 'w+') as f:
+            f.write("num, lr, mom, step, ssimIOD, ssimWAT, rIOD, rWAT, trainLOSS, testLOSS\n")
 
     # space to perform gridsearch over
     lrrange = np.linspace(args.lrfrom, args.lrto, args.steps)

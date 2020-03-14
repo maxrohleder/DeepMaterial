@@ -39,6 +39,10 @@ def calculate_loss(set, loss_fn, length_set, dev, model):
             l += float(loss_fn(pred, y).item())
     return l/length_set
 
+def count_trainables(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 def computeMeanStdOverDataset(datasettype, DATAFOLDER, load_params, device, transform=None):
     # NORMLABEL
     if datasettype == 'CONRADataset':
@@ -259,6 +263,7 @@ def train(args):
 
     if args.model == "unet":
         m = UNet(2, 2).to(device)
+        print("using the U-Net architecture with {} trainable params; Good Luck!".format(count_trainables(m)))
     else:
         m = simpleConvNet(2, 2).to(device)
 

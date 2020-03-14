@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 import argparse
 from torch.utils.data import DataLoader
 from torchvision import transforms
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 from CONRADataset import CONRADataset
 from material import multi_slice_viewer
@@ -98,9 +98,11 @@ if __name__ == "__main__":
                         help='directory to safe logs and reference images to')
     parser.add_argument('--model', '-m', default='unet',
                         help='model to use. options are: <unet>, [<simpleconv>]')
+    parser.add_argument('--nosave', default=True, action='store_false', required=False)
 
     args = parser.parse_args()
     root_dir = args.data
+    save = args.nosave
     CHECKPOINT = args.weigths
     use_cuda = torch.cuda.is_available()
     device = torch.device("cuda:0" if use_cuda else "cpu")
@@ -141,8 +143,8 @@ if __name__ == "__main__":
     # insert mean and std of trainingsrun here
     mean = [0.08751187324523926, 71.52521623883929]
     std = [71.52521623883929]
-
     labelsNorm = transforms.Normalize(mean=mean, std=std)
+
     labelsNorm = None
 
     # trainset part of this dataset
@@ -161,7 +163,7 @@ if __name__ == "__main__":
     evalset1 = DataLoader(evaldata1, **train_params)
     evalset2 = DataLoader(evaldata2, **train_params)
 
-    print("saving reference image")
+    print("feedind data through network...")
     with torch.no_grad():
         # c, p, y, x
         iodine = np.zeros((200, 480, 620))
@@ -202,37 +204,41 @@ if __name__ == "__main__":
             gti[counter] = mat.data[0, 0, :, :]
             gtw[counter] = mat.data[0, 1, :, :]
             counter += 1
-        size_str = '620x480x200'
-        fle_iodine = args.target + 'iodine_pred_' + size_str + '.raw'
-        fle_water = args.target + 'water_pred_' + size_str + '.raw'
-        fle_le = args.target + 'le_' + size_str + '.raw'
-        fle_he = args.target + 'he_' + size_str + '.raw'
-        fle_gtiod = args.target + 'iodine_truth_' + size_str + '.raw'
-        fle_gtwater = args.target + 'water_truth_' + size_str + '.raw'
-        print(fle_iodine)
-        with open(fle_iodine, 'w+'):
-            print('iodine prediction type: ' + str(iodine.dtype) + ' max/min: ' + str(np.max(iodine)) + '/' + str(np.min(iodine)))
-            iodine.astype('float32').tofile(fle_iodine)
-        # saving water image
-        with open(fle_water, 'w+'):
-            print('water prediction type: ' + str(water.dtype) + ' max/min: ' + str(np.max(water)) + '/' + str(np.min(water)))
-            iodine.astype('float32').tofile(fle_water)
-        # saving le image
-        with open(fle_le, 'w+'):
-            print('le image type: ' + str(le.dtype) + ' max/min: ' + str(np.max(le)) + '/' + str(np.min(le)))
-            iodine.astype('float32').tofile(fle_le)
-        # saving he image
-        with open(fle_he, 'w+'):
-            print('he image type: ' + str(he.dtype) + ' max/min: ' + str(np.max(he)) + '/' + str(np.min(he)))
-            iodine.astype('float32').tofile(fle_he)
-        # saving gt iodine image
-        with open(fle_gtiod, 'w+'):
-            print('truth iodine type: ' + str(gti.dtype) + ' max/min: ' + str(np.max(gti)) + '/' + str(np.min(gti)))
-            iodine.astype('float32').tofile(fle_gtiod)
-        #saving gt water image
-        with open(fle_gtwater, 'w+'):
-            print('truth water type: ' + str(gtw.dtype) + ' max/min: ' + str(np.max(gtw)) + '/' + str(np.min(gtw)))
-            iodine.astype('float32').tofile(fle_gtwater)
+        if save:
+            print("saving image stack")
+            size_str = '620x480x200'
+            fle_iodine = args.target + 'iodine_pred_' + size_str + '.raw'
+            fle_water = args.target + 'water_pred_' + size_str + '.raw'
+            fle_le = args.target + 'le_' + size_str + '.raw'
+            fle_he = args.target + 'he_' + size_str + '.raw'
+            fle_gtiod = args.target + 'iodine_truth_' + size_str + '.raw'
+            fle_gtwater = args.target + 'water_truth_' + size_str + '.raw'
+            print(fle_iodine)
+            with open(fle_iodine, 'w+'):
+                print('iodine prediction type: ' + str(iodine.dtype) + ' max/min: ' + str(np.max(iodine)) + '/' + str(np.min(iodine)))
+                iodine.astype('float32').tofile(fle_iodine)
+            # saving water image
+            with open(fle_water, 'w+'):
+                print('water prediction type: ' + str(water.dtype) + ' max/min: ' + str(np.max(water)) + '/' + str(np.min(water)))
+                water.astype('float32').tofile(fle_water)
+            # saving le image
+            with open(fle_le, 'w+'):
+                print('le image type: ' + str(le.dtype) + ' max/min: ' + str(np.max(le)) + '/' + str(np.min(le)))
+                le.astype('float32').tofile(fle_le)
+            # saving he image
+            with open(fle_he, 'w+'):
+                print('he image type: ' + str(he.dtype) + ' max/min: ' + str(np.max(he)) + '/' + str(np.min(he)))
+                he.astype('float32').tofile(fle_he)
+            # saving gt iodine image
+            with open(fle_gtiod, 'w+'):
+                print('truth iodine type: ' + str(gti.dtype) + ' max/min: ' + str(np.max(gti)) + '/' + str(np.min(gti)))
+                gti.astype('float32').tofile(fle_gtiod)
+            #saving gt water image
+            with open(fle_gtwater, 'w+'):
+                print('truth water type: ' + str(gtw.dtype) + ' max/min: ' + str(np.max(gtw)) + '/' + str(np.min(gtw)))
+                gtw.astype('float32').tofile(fle_gtwater)
+        else:
+            print("saving disabled!")
         #f = np.fromfile(file=file, dtype=dt).newbyteorder().byteswap()
         # np.save(fle_iodine, iodine, dtype=dt)
         # np.save(fle_water, water, dtype=dt)
@@ -243,28 +249,32 @@ if __name__ == "__main__":
 
 
         ### computing ssim and r index over dataset
-        iodSSIM = 0
-        waterSSIM = 0
-        iodR = 0
-        waterR = 0
-        for p in range(200):
+        print("computing SSIM and R for all projections...")
+        ssiodlist = []
+        sswaterlist = []
+        riodlist = []
+        rwaterlist = []
+        for p in trange(200):
             pred = iodine[p]
             gt = gti[p]
-            ss = ssim(pred, gt)
-            r = np.corrcoef(pred, gt)[1, 0]
-            iodR += r/200
-            iodSSIM += ss/200
-        for p in range(200):
+            ssiodlist.append(ssim(pred, gt))
+            riodlist.append(np.corrcoef(pred, gt)[1, 0])
+        for p in trange(200):
             pred = water[p]
             gt = gtw[p]
-            ss = ssim(pred, gt)
-            r = np.corrcoef(pred, gt)[1, 0]
-            waterR += r/200
-            waterSSIM += ss/200
-        print("SSIM (water/iod): {} / {}".format(waterSSIM, iodSSIM))
-        print("R (water/iod): {} / {}".format(waterR, iodR))
+            sswaterlist.append(ssim(pred, gt))
+            rwaterlist.append(np.corrcoef(pred, gt)[1, 0])
 
+        print("computing SSIM and R statistics")
 
+        meaniodSSIM, stdiodSSIM= np.mean(ssiodlist), np.std(ssiodlist)
+        meanwaterSSIM, stdwaterSSIM = np.mean(sswaterlist), np.std(sswaterlist)
+
+        meaniodR, stediodR = np.mean(riodlist), np.std(riodlist)
+        meanwaterR, stdwaterR = np.mean(rwaterlist), np.std(rwaterlist)
+
+        print("Iodine: \n\tssim (mean, std): {} / {}\n\tR (mean, std): {} / {}".format(meaniodSSIM, stdiodSSIM, meaniodR, stediodR))
+        print("Water: \n\tssim (mean, std): {} / {}\n\tR (mean, std): {} / {}".format(meanwaterSSIM, stdwaterSSIM, meanwaterR, stdwaterR))
         exit(0)
 
 
